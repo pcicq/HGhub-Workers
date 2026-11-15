@@ -259,13 +259,15 @@ Workers Free 计划（[官方 Limits](https://developers.cloudflare.com/workers/
 
 对应截图里「创建应用 → Continue with GitHub → 选择存储库 → 创建和部署」这条路。Cloudflare 托管构建，push 到生产分支即部署；本机不需要 `wrangler login`、也不需要 API token。
 
+> 前提：先把仓库 **Fork 到自己的 GitHub 账号**，构建时选自己的那份 fork——凭据、Worker 与域名都落在自己账号下；同时把 fork 的默认分支改成 `master`（`Settings → General → Default branch`），否则 Git 集成会默认监听 `main`（上游完整工程，无 `workers/` 与 `h5:*` 脚本）。
+
 ### B1. 三条命令（平台无关，直接复制）
 
 仓库已把命令收敛成 npm scripts，Builds 里不需要额外配置文件：
 
 | 设置项 | 值 |
 | --- | --- |
-| Git repository | `pcicq/HGhub-Workers` |
+| Git repository | **你自己 fork 的仓库** `<你的账号>/HGhub-Workers`（先 Fork 到自己的账号，不要让构建链路指向本仓库） |
 | **Git branch** | **`master`**（官方默认填 `main`，本仓库必须手动改，见 B2 顶部警示） |
 | 项目名称 | `hghub-workers-h5` |
 | Root directory | `/`（默认，留空即可） |
@@ -287,7 +289,7 @@ Workers Free 计划（[官方 Limits](https://developers.cloudflare.com/workers/
 
 > 🔴 **本仓库特有的坑：生产分支必须选 `master`。** 远端 `main` 仍是上游 fork 的完整项目（`455f3ab`），里面没有 `workers/`，也没有 `h5:*` 脚本；H5 代码只在 `master`（`03c0afa`）。官方 Build settings 的 `Git branch` 说明是「Select the branch you would like Cloudflare to listen to for new commits. This will be defaulted to `main`」——照默认值连会拉到错误的代码，构建必然失败（典型症状：找不到 `workers/wrangler.toml`，或 `npm run h5:build` 报 `Missing script`）。创建时手动改成 `master`；已建好的在 `Settings` → `Build` → `Git branch` 改，**改完的配置对下一次构建生效**。
 
-1. `Workers & Pages` → `Create application` → `Continue with GitHub` → 授权 Cloudflare GitHub App → 选仓库 `pcicq/HGhub-Workers`，**Git branch 选 `master`**。
+1. `Workers & Pages` → `Create application` → `Continue with GitHub` → 授权 Cloudflare GitHub App → 选**自己 fork 的仓库** `<你的账号>/HGhub-Workers`，**Git branch 选 `master`**。
    - 若已用方式 A 部署过同名 Worker，不能再 `Create application`：改走 `Workers & Pages` → 选中该 Worker → `Settings` → `Builds` → `Connect`。两条生产链路并存会轮流覆盖 Active Deployment，建议只保留一条。
 2. **项目名称必须填 `hghub-workers-h5`**，与 `workers/wrangler.toml` 的 `name` 完全一致。官方明确要求 Dashboard 里的 Worker 名与配置文件的 `name` 匹配，否则构建失败。
 3. 按 B1 填三条命令 → `Save and Deploy`。

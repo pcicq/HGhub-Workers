@@ -114,7 +114,8 @@ corepack pnpm h5:pages:build    # = h5:build + 复制 dist + 打包 CF/ESA 两�
 
 | 字段 | 填值 |
 | --- | --- |
-| 生产分支 | `master`（与仓库一致） |
+| 代码仓库 | 自己 fork 的 `<你的账号>/HGhub-Workers`（先 Fork，再在 ESA 授权并选择该仓库） |
+| 生产分支 | `master`（与仓库一致；fork 后默认分支若为 `main`，先改成 `master`） |
 | 安装命令 | `npm install`（项目脚本内部用 `npm run`，能跑）；要与 CI 完全一致用 `corepack pnpm install --frozen-lockfile` |
 | 构建命令 | **`npm run h5:pages:build`**（不是 `h5:build`） |
 | 根目录 | `/` |

@@ -61,7 +61,20 @@ corepack pnpm h5:dev           # http://localhost:8787
 
 ## 部署方式
 
-两条链路共用同一份业务代码与 `h5:ci` 门禁，差别只在构建产物与入口。**命令由你在本地/控制台执行**，仓库不代为部署；口令一律写入平台 Secret（变量），不进仓库、不进 `[vars]`。
+两条链路共用同一份业务代码与 `h5:ci` 门禁，差别只在构建产物与入口。**请先 fork 到自己的仓库再部署**——构建凭据、Worker 名与域名都归你自己的账号，不要直接部署本仓库。命令由你在本地/控制台执行，仓库不代为部署；口令一律写入平台 Secret（变量），不进仓库、不进 `[vars]`。
+
+### 0. Fork 到自己的仓库（前置）
+
+```sh
+# 网页端：仓库页右上角 Fork → 选自己的账号
+git clone https://github.com/<你的账号>/HGhub-Workers.git
+cd HGhub-Workers && git checkout master   # 生产分支是 master，H5 代码只在这条分支
+```
+
+- Fork 后把默认分支改为 `master`（`Settings → General → Default branch`）。Git 集成的分支默认值常是 `main`，而 `main` 是上游 fork 的完整工程，没有 `workers/`、也没有 `h5:*` 脚本，构建必然失败。
+- 本地 CLI 部署同样在自己的 fork 上操作，改动与口令只留在自己仓库。
+
+### 1. 选链路
 
 | 链路 | 构建 | 部署 | 产物 |
 | --- | --- | --- | --- |
@@ -70,7 +83,7 @@ corepack pnpm h5:dev           # http://localhost:8787
 
 > 另有 Cloudflare Pages（advanced mode）兼容链路，产物同为 `pages-dist/_worker.js`，命令见 [docs/h5-platforms.md](docs/h5-platforms.md)。
 
-### Cloudflare Workers
+### 2. Cloudflare Workers
 
 ```sh
 corepack pnpm h5:build                                     # 生成 dist/
@@ -81,15 +94,16 @@ npx --yes wrangler@4 secret put H5_ACCESS_KEY --config workers/wrangler.toml   #
 ```
 
 - **顺序不能反**：`secret put` 会再部署一个版本，必须在 Worker 创建之后执行。
-- **Git 集成（Workers Builds）**：Build `npm run h5:build`、Deploy `npm run h5:deploy`、Preview `npm run h5:preview`；分支填 `master`（不是 `main`），项目名填 `hghub-workers-h5`，口令加到 `Settings → Variables & Secrets`（Secret 类型，不是 Build Variables）。
+- **Git 集成（Workers Builds）**：仓库选**你自己 fork 的那份**，分支 `master`；Build `npm run h5:build`、Deploy `npm run h5:deploy`、Preview `npm run h5:preview`；项目名填 `hghub-workers-h5`（须与 `workers/wrangler.toml` 的 `name` 一致），口令加到 `Settings → Variables & Secrets`（Secret 类型，不是 Build Variables）。
 - 认准 **Workers 项目**（`*.workers.dev`），不是 Pages（`*.pages.dev`）。
 
-### 阿里云 ESA 函数和 Pages
+### 3. 阿里云 ESA 函数和 Pages
 
 控制台 Git 集成部署，表单按此填写：
 
 | 字段 | 值 |
 | --- | --- |
+| 代码仓库 | **你自己 fork 的 `<你的账号>/HGhub-Workers`**（授权自己的 GitHub 账号） |
 | 生产分支 / 根目录 | `master` / `/` |
 | 构建命令 | `npm run h5:pages:build`（**不是** `h5:build`） |
 | 静态资源目录 | `./esa-static`（**不能**填 `./dist`，否则 `index.html` 绕过解锁页） |
@@ -101,7 +115,7 @@ npx --yes wrangler@4 secret put H5_ACCESS_KEY --config workers/wrangler.toml   #
 - 函数变量改动后需**重新生成版本并发布**才生效。
 - 单次执行最多 4 个 `fetch`：浏览 / 搜索 / 播放正常，`line_probe`、`line_auto`、`line_mirrors` 必然超限（属降级，非缺陷）。
 
-### 部署后验证（两条链路通用）
+### 4. 部署后验证（两条链路通用）
 
 | 检查 | 期望 |
 | --- | --- |
