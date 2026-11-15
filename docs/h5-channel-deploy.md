@@ -9,7 +9,7 @@
 | 方式 | 入口 | 适用 |
 | --- | --- | --- |
 | A. 本地 CLI（步骤 0–8） | 本机 `wrangler deploy` | 首次验证、个人自用 |
-| B. GitHub 拉取（文末「方式 B」） | Cloudflare Workers Builds Git 集成，push 即部署 | 团队协作、不想在本机配凭据 |
+| B. GitHub 拉取（文末「方式 B」） | Cloudflare Workers Builds Git 集成，push 到生产分支即部署；**本仓库生产分支是 `master` 而不是 `main`** | 团队协作、不想在本机配凭据 |
 
 跨平台标准化契约见 [h5-platforms.md](./h5-platforms.md)。
 
@@ -91,7 +91,7 @@ npx --yes wrangler@4 whoami
 npx --yes wrangler@4 deploy --dry-run --config workers/wrangler.toml
 ```
 
-判据：输出 `Read N files from the assets directory .../dist`、绑定表里出现 `env.ASSETS Assets`，并以 `--dry-run: exiting now.` 结束。本仓库实测 `Total Upload: 51.33 KiB / gzip: 14.92 KiB`、读取 16 个 assets 文件。若报找不到 `dist`，回到步骤 1 先 `h5:build`。
+判据：输出 `Read N files from the assets directory .../dist`、绑定表里出现 `env.ASSETS Assets`，并以 `--dry-run: exiting now.` 结束。2026-11-15 在本仓库实测读取 16 个 assets 文件、`Total Upload: 50.68 KiB / gzip: 14.82 KiB`（体积随构建内容变化，以本机输出为准）。若报找不到 `dist`，回到步骤 1 先 `h5:build`。
 
 `--dry-run` 的官方语义是「Compile a project without actually deploying to live servers」，不会创建 Worker、不会产生费用。
 
@@ -265,6 +265,9 @@ Workers Free 计划（[官方 Limits](https://developers.cloudflare.com/workers/
 
 | 设置项 | 值 |
 | --- | --- |
+| Git repository | `pcicq/HGhub-Workers` |
+| **Git branch** | **`master`**（官方默认填 `main`，本仓库必须手动改，见 B2 顶部警示） |
+| 项目名称 | `hghub-workers-h5` |
 | Root directory | `/`（默认，留空即可） |
 | Build command | `npm run h5:build` |
 | Deploy command | `npm run h5:deploy` |
@@ -278,12 +281,15 @@ Workers Free 计划（[官方 Limits](https://developers.cloudflare.com/workers/
 
 ### B2. Dashboard 操作顺序
 
-1. `Workers & Pages` → `Create application` → `Continue with GitHub` → 授权 Cloudflare GitHub App → 选仓库、分支 `main`。
+> 🔴 **本仓库特有的坑：生产分支必须选 `master`。** 远端 `main` 仍是上游 fork 的完整项目（`455f3ab`），里面没有 `workers/`，也没有 `h5:*` 脚本；H5 代码只在 `master`（`03c0afa`）。官方 Build settings 的 `Git branch` 说明是「Select the branch you would like Cloudflare to listen to for new commits. This will be defaulted to `main`」——照默认值连会拉到错误的代码，构建必然失败（典型症状：找不到 `workers/wrangler.toml`，或 `npm run h5:build` 报 `Missing script`）。创建时手动改成 `master`；已建好的在 `Settings` → `Build` → `Git branch` 改，**改完的配置对下一次构建生效**。
+
+1. `Workers & Pages` → `Create application` → `Continue with GitHub` → 授权 Cloudflare GitHub App → 选仓库 `pcicq/HGhub-Workers`，**Git branch 选 `master`**。
+   - 若已用方式 A 部署过同名 Worker，不能再 `Create application`：改走 `Workers & Pages` → 选中该 Worker → `Settings` → `Builds` → `Connect`。两条生产链路并存会轮流覆盖 Active Deployment，建议只保留一条。
 2. **项目名称必须填 `hghub-workers-h5`**，与 `workers/wrangler.toml` 的 `name` 完全一致。官方明确要求 Dashboard 里的 Worker 名与配置文件的 `name` 匹配，否则构建失败。
 3. 按 B1 填三条命令 → `Save and Deploy`。
 4. 首次构建会创建 Worker，但此时 `/hg/health` 返回 **503**（还没配 `H5_ACCESS_KEY`），属预期，别把地址发出去。
 5. 到 `Settings` → `Variables & Secrets` 添加 `H5_ACCESS_KEY`，类型选 **Secret**。⚠️ 不要填到 `Settings` → `Build` → `Build Variables and Secrets`——官方说明后者只在构建期生效，运行时读不到。
-6. 重跑一次构建（push 一个 commit 或在 build history 里 Retry），再按步骤 6 的判据逐项验证。
+6. 重跑一次构建（push 一个 commit 或在 build history 里 Retry）——官方说明保存后的 build settings 只作用于**下一次**构建；再按步骤 6 的判据逐项验证。
 
 ### B3. 构建环境核对
 
@@ -307,13 +313,14 @@ Workers Free 计划（[官方 Limits](https://developers.cloudflare.com/workers/
 | Cloudflare Workers Builds | 从 GitHub 拉取、构建、部署到 CF 生产 | CF 自动生成 API token |
 | 其它云平台 | 复用同一份 `dist/` 与 `h5:ci` 门禁 | 各平台自管，见 [h5-platforms.md](./h5-platforms.md) |
 
-`ci.yml` 里只有一个 `h5` job（pnpm 10 + Node 22），`push` 同时覆盖 `main` 与 `master`；本仓库不含 Tauri / Rust 工程，因此没有 `frontend` / `rust` job，也不新增 workflow 文件。若想改用 GitHub Actions 部署到 CF，可自行加一个部署 job，凭据放 Repository Secrets；本仓库不预置，避免把部署凭据写进 CI 配置。
+`master` 分支上的 `ci.yml` 只有一个 `h5` job（pnpm 10 + Node 22），`push` 触发器覆盖 `main` 与 `master`；但远端 `main` 是上游 fork 的旧 workflow，H5 门禁实际只在 `master` 生效。本仓库不含 Tauri / Rust 工程，因此没有 `frontend` / `rust` job，也不新增 workflow 文件。若想改用 GitHub Actions 部署到 CF，可自行加一个部署 job，凭据放 Repository Secrets；本仓库不预置，避免把部署凭据写进 CI 配置。
 
 ### B5. 方式 B 排错
 
 | 现象 | 原因与处理 |
 | --- | --- |
 | 构建失败提示 Worker name 不匹配 | Dashboard 项目名必须等于 `hghub-workers-h5` |
+| 构建日志找不到 `workers/wrangler.toml` / `Missing script: h5:build` | Git branch 用了默认的 `main`（上游 fork 内容，没有 workers/），改成 `master` 并触发一次新构建 |
 | 出现 autoconfig 自动提的 PR | Deploy command 没带 `--config workers/wrangler.toml`，wrangler 在仓库根没找到配置 |
 | `/hg/health` 一直 503 | `H5_ACCESS_KEY` 配到了 Build variables（构建期）而不是 Variables & Secrets（运行时） |
 | 报找不到 `dist` | Build command 没跑成功，或 `assets.directory` 相对路径解析不对（相对 `workers/wrangler.toml`） |
