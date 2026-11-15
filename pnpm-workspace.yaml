@@ -3,6 +3,12 @@
 #     安装相关设置必须写在这里（pnpm 10 也读这份文件，两处并存不冲突，.npmrc 留给 pnpm 10）。
 #   * 构建脚本白名单由 `allowBuilds` 取代 `onlyBuiltDependencies`（旧键保留给 pnpm 10 的 CI）。
 
+# 单包仓库也必须显式声明根包：pnpm 9.x / <10.5 遇到没有 packages 字段的
+# pnpm-workspace.yaml 会报 `ERROR packages field missing or empty` 并拒装依赖。
+# Cloudflare Workers Builds 的安装阶段实测命中；pnpm 10.5+ 才把该字段改为可选。
+packages:
+  - "."
+
 # 工程常放在 exFAT 盘（不支持符号链接），必须 hoisted；否则 pnpm 11 会 ERR_PNPM_EISDIR。
 nodeLinker: hoisted
 shamefullyHoist: true

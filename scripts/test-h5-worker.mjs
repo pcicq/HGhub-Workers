@@ -11,9 +11,16 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
-const esbuild = join(root, "node_modules/.bin/esbuild");
-if (!existsSync(esbuild)) {
-  console.error("找不到 node_modules/.bin/esbuild，请先执行 corepack pnpm install --frozen-lockfile");
+// pnpm 各版本的 hoisted 布局不同：10/12 会在 node_modules/.bin 建软链，
+// pnpm 9 只把 esbuild 放在 .pnpm/node_modules 下且不建 .bin 链接。
+// 三处都指向同一个原生二进制，任一存在即可直接执行。
+const esbuild = [
+  join(root, "node_modules/.bin/esbuild"),
+  join(root, "node_modules/esbuild/bin/esbuild"),
+  join(root, "node_modules/.pnpm/node_modules/esbuild/bin/esbuild"),
+].find((path) => existsSync(path));
+if (!esbuild) {
+  console.error("找不到 esbuild，请先执行 corepack pnpm install --frozen-lockfile");
   process.exit(1);
 }
 

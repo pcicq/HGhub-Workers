@@ -305,6 +305,15 @@ Workers Free 计划（[官方 Limits](https://developers.cloudflare.com/workers/
 
 **版本不一致要留意**：本仓库 `pnpm-lock.yaml` 是 `lockfileVersion: '9.0'`；本地用 pnpm 12.21.0、GitHub Actions 用 pnpm 10、Builds 默认 9.10.0。若构建报 lockfile 不兼容，在 `Settings` → `Build` → `Build Variables` 加 `PNPM_VERSION=12.21.0`（官方优先级低于 `packageManager` 字段），或在 `package.json` 加 `"packageManager": "pnpm@12.21.0"`——后者会同时改变本地 `corepack pnpm` 选中的版本，改完需要重装依赖。
 
+**已修复的实测坑（2026-11-15）**：某次构建日志显示 `Detected the following tools from environment: pnpm@10.11.1, nodejs@24.18.0`，但依赖安装阶段报 `ERROR packages field missing or empty` / `For help, run: pnpm help install`。根因是 `pnpm-workspace.yaml` 原本只写安装设置、没有 `packages` 字段——pnpm 9.x / <10.5 会把它当成空 workspace 直接拒装，pnpm 10.5+ 才允许省略该字段；日志里「检测到的版本」与「实际执行安装的版本」并不一致。本仓库已显式声明单包：
+
+```yaml
+packages:
+  - "."
+```
+
+该写法在 pnpm 9.15.0 与 10.11.1 下均通过 `pnpm install --frozen-lockfile`，`pnpm-lock.yaml` 不变（`importers` 本来就是 `.`）。若仍报此错，说明拉到的提交不含该修复，**先确认 Git branch 是 `master`**；临时绕过可在 Build Variables 加 `PNPM_VERSION=10.11.1`。
+
 ### B4. 与 GitHub Actions 的分工
 
 | 链路 | 做什么 | 凭据 |
@@ -324,6 +333,7 @@ Workers Free 计划（[官方 Limits](https://developers.cloudflare.com/workers/
 | 出现 autoconfig 自动提的 PR | Deploy command 没带 `--config workers/wrangler.toml`，wrangler 在仓库根没找到配置 |
 | `/hg/health` 一直 503 | `H5_ACCESS_KEY` 配到了 Build variables（构建期）而不是 Variables & Secrets（运行时） |
 | 报找不到 `dist` | Build command 没跑成功，或 `assets.directory` 相对路径解析不对（相对 `workers/wrangler.toml`） |
+| `ERROR packages field missing or empty` | 拉到的提交里 `pnpm-workspace.yaml` 缺 `packages`（pnpm 9.x 硬校验）；确认 Git branch = `master`，或临时加 `PNPM_VERSION=10.11.1`，详见 B3 |
 | pnpm lockfile 报错 | 见 B3 的版本不一致处理 |
 | 本地 CLI 与 Builds 互相覆盖版本 | 两条生产链路并存会轮流覆盖 Active Deployment，确定一条为准，另一条只用于本地 `--dry-run` |
 
