@@ -288,15 +288,26 @@ export async function fetchGuarded(rawUrl: string, init: RequestInit = {}, maxHo
   let current = parseTarget(rawUrl);
   const headers = new Headers(init.headers);
   const hasCredentials = headers.has("authorization") || headers.has("cookie");
-  for (let hop = 0; hop <= maxHops; hop++) {
-    const response = await fetch(current, { ...init, headers, redirect: "manual" });
-    if (![301, 302, 303, 307, 308].includes(response.status)) return response;
-    if (hasCredentials) throw new Error("业务接口重定向已拒绝");
-    const location = response.headers.get("location");
-    if (!location || hop === maxHops) throw new Error("上游重定向次数超过限制");
-    current = parseTarget(new URL(location, current).toString());
+  // 对齐 src-tauri/src/net.rs 的 get_with_dns：整个逐跳链路共用一个总时限。
+  // 调用方自带 signal 时（发布页 8s / 线路探测 5s）沿用调用方时限；
+  // 否则默认 20s，避免一次上游挂起把 hls.js 的 25s fragLoadingTimeOut 拖满。
+  const controller = new AbortController();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const signal = init.signal ?? controller.signal;
+  if (!init.signal) timer = setTimeout(() => controller.abort(), 20_000);
+  try {
+    for (let hop = 0; hop <= maxHops; hop++) {
+      const response = await fetch(current, { ...init, headers, redirect: "manual", signal });
+      if (![301, 302, 303, 307, 308].includes(response.status)) return response;
+      if (hasCredentials) throw new Error("业务接口重定向已拒绝");
+      const location = response.headers.get("location");
+      if (!location || hop === maxHops) throw new Error("上游重定向次数超过限制");
+      current = parseTarget(new URL(location, current).toString());
+    }
+    throw new Error("上游重定向次数超过限制");
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
   }
-  throw new Error("上游重定向次数超过限制");
 }
 
 export function json(value: unknown, status = 200, extra: HeadersInit = {}): Response {

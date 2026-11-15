@@ -93,7 +93,7 @@ corepack pnpm h5:deploy
 | 镜像发布页 | 点开「线路」面板 | 「推荐镜像」「镜像线路」两组出现发布页地址，不再是空列表 |
 | 自动选线 | 设置 → 网络打开「自动选择线路」 | `line_auto` 返回 `pick.reason` 为 `main-ok` / `mirror-ok` / `all-down`，不再是 `h5-fixed-line` |
 
-其中「能力探针 / 未解锁入口与 RPC / 跨站调用 / 口令 / CSP / SSRF / 媒体缓存 / 线路全链路」已由 `test:h5-worker` 在本地无网络环境下覆盖（45 项断言）；需要真实上游的列表、封面、播放、登录与地址发布页仍须部署后人工回归。
+其中「能力探针 / 未解锁入口与 RPC / 跨站调用 / 口令 / CSP / SSRF / 媒体缓存 / 线路全链路」已由 `test:h5-worker` 在本地无网络环境下覆盖（53 项断言）；需要真实上游的列表、封面、播放、登录与地址发布页仍须部署后人工回归。
 
 ## 能力边界（相对 Tauri 客户端）
 
@@ -109,10 +109,30 @@ corepack pnpm h5:deploy
 | 网络诊断 / 播放诊断日志落盘 / 清理缓存 | 降级为空操作 | 浏览器无应用数据目录；缓存由 TTL 控制 |
 | 桌面标题栏 / 窗口缩放 / 屏幕方向 / 退出应用 | 不适用 | 使用无壳网页布局 |
 
+## 媒体链路：与桌面端 `media.rs` 的对照
+
+上游仓库的「不卡」建立在**三级缓存 + 连接复用 + 有限重试**上（`src-tauri/src/media.rs`、`net.rs`、`media_dns.rs`）。H5 是无状态 Worker，无法照搬进程内缓存，按等价效果实现：
+
+| 环节 | 桌面端 Rust | H5 Worker | 等价性 |
+| --- | --- | --- | --- |
+| 主清单 `/hls` | `PL_CACHE` 60 条进程内存缓存，HTTP 头 `no-store` | 每次回源，`no-store`，无内存缓存 | ❌ 起播多一次回源；不解释持续卡顿 |
+| 子清单 `/seg` | 识别后继续改写 URI，`public, max-age=3600`（`media-cache-audit-20261108.md` 明确要求保留） | 同 | ✅ |
+| 分片 / Key | `fetch_bytes().bytes().await` 收完整 → `SEG_CACHE`（≤4 MB / 36 条）、`KEY_CACHE`（≤64 KB / 120 条）→ `apply_byte_range` 本地切片，**Range 从不转发上游** | 流式直透、Range 转发上游，浏览器按 `public, max-age=3600` 本地缓存 | ⚠️ 效果接近、实现不同 |
+| 出站超时 | `get_with_dns` 整个逐跳链路共用 20s，connect 10s | `fetchGuarded` 默认 20s；发布页 8s / 线路探测 5s 用自带 signal | ✅ |
+| 重试 | `with_retry(true)` 最多 3 次 + 350/700ms 退避 + `heal_client` 重建客户端；只重试 408/425/429/5xx 与网络错误 | 服务端不重试，由 hls.js `fragLoadingMaxRetry: 6` 承担 | ⚠️ 偶发抖动多付一次 RTT |
+| 连接 / DNS | reqwest Client 复用 30s、`pool_idle_timeout 60s`、`gzip/brotli`；DNS 失败切阿里公共 DNS（`media_dns.rs`） | CF 边缘连接池与 DNS | ❌ 平台决定，不可搬 |
+| 播放器 | hls.js `maxBufferLength 30` / `fragLoadingTimeOut 25000` / 6 次重试 / 非致命 stall 立即 `startLoad()` | 同一套前端代码，参数完全相同 | ✅ |
+
+🔴 **流式分片绝不进 Cache API**。此前把 `waitUntil(cache.put(request, fresh.clone()))` 用在 `/seg` 上：`Response.clone()` 会 tee 上游流，`cache.put` 若因 206 / Vary / 响应头不符提前失败，第二个分支不会被消费完，tee 的背压会反过来卡住返回给播放器的分支——这正是「改了缓存还是卡」的原因。桌面端从没有这条路径：它先收完整字节再返回，从不 clone 在途流。现在 `/seg` 纯流式直透，重复分片交给浏览器 HTTP 缓存；`withCache` 只服务已完整缓冲在内存的 `/img`。
+
+**改代码消除不了的部分**：浏览器 → CF 边缘 → Worker → 上游 CDN 比桌面端多一跳；上游 CDN 在国内、边缘节点在境外时 RTT 由线路决定。要降它只能换线路 / 换部署区域 / 让分片直连上游 CDN，但后者会破坏同源口令与 SSRF 边界，不做。
+
+**需要实机确认的上游形态**（本次只做仓库内源码核对，未访问上游站点、未抓真实 m3u8）：DevTools → Network 过滤 `/hg/seg`，看 ① TTFB 与总耗时；② 是否 206、带不带 `Content-Range`；③ 有没有 302 逐跳；④ 单分片大小。TTFB 高、传输短 → 跨境 RTT 或上游响应慢；TTFB 低但总耗时长且分片 >1 MB → 带宽；大量 206 → 走的是 iOS/Safari 原生 HLS，Range 每次回源，需让浏览器走 hls.js。
+
 ## 风险
 
 - **【高风险】合规**：见顶部警示。公开、无口令、商业或面向中国大陆提供传播服务都超出本仓库允许范围。若无法确保，请不要部署，或改用本机 `wrangler dev` 自用。
-- **【高风险】上游压力与费用**：所有 API、封面、m3u8、分片都经 Worker 转发，产生 Workers 请求数与带宽成本，也受运行时 CPU/内存/子请求限制。README「不要给上游增加压力」「不要改小或关掉缓存」在这里同样适用；`img`/`seg` 已做边缘缓存，`hls` 保持 `no-store`（与 Tauri 侧一致）。
+- **【高风险】上游压力与费用**：所有 API、封面、m3u8、分片都经 Worker 转发，产生 Workers 请求数与带宽成本，也受运行时 CPU/内存/子请求限制。README「不要给上游增加压力」「不要改小或关掉缓存」在这里同样适用；`/img` 走边缘 Cache API，`/seg` 给浏览器 `public, max-age=3600` 由浏览器复用（流式分片不进 Cache API，原因见上一节），`/hls` 保持 `no-store`（与 Tauri 侧一致）。
 - **【中风险】共享口令**：`H5_ACCESS_KEY` 是单口令，不是按用户身份鉴权；任何拿到口令的人都能访问。Cookie 有效期 30 天，轮换密钥即可全部失效。公开部署建议叠加 Cloudflare Access / WAF 来源 IP 限制。
 - **【中风险】媒体目标只拦私网**：`/hg/seg` 允许任意公网 HTTP(S) 目标（已拦本机、内网、保留地址、内部协议主机名，且逐跳校验重定向）。若站点可公开访问，可能被当作通用代理，建议加来源限制。
 - **【中风险】自定义线路即凭据去向**：保存自定义线路后，登录 token 会随 `/hg/rpc` 发往该 origin；会话按 origin 隔离、切换线路即清空，但用户仍需自行确认站点可信。线路必须是纯 HTTPS origin，`parseTarget` 已拦本机/内网/保留地址、认证信息与跨跳重定向；**Worker 无法像桌面端那样先做 DNS 解析再判 IP**，域名被解析到私网地址的 DNS rebinding 场景在边缘侧无法完全排除。只保存自己信任的站点，并叠加来源 IP 限制。

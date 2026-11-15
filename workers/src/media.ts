@@ -126,12 +126,16 @@ export interface CacheContext {
 }
 
 /**
- * 封面与静态分片做边缘缓存，避免重复请求给上游加压。
- * 两条性能语义不能改回去：
- *  1. 缓存写入必须放到后台，`await cache.put()` 会等整个分片下载完才返回，
- *     首字节被阻塞、播放器拿不到流，表现为起播慢和卡顿；
- *  2. 缓存读写失败只降级为「不缓存」，绝不能重新 produce() 回源一次，
- *     否则单次分片要付两次上游往返。
+ * 封面走边缘缓存。只用于「已经完整缓冲在内存里」的响应：
+ *  1. 缓存写入放后台，写失败只降级为「不缓存」；
+ *  2. 绝不能重新 produce() 回源一次，否则单次请求要付两次上游往返。
+ *
+ * 🔴 不要把流式分片塞进这里。Response.clone() 会 tee 上游流，交给
+ * waitUntil(cache.put(...)) 后若 put 提前失败（206 / Vary / 头不符），
+ * 第二个分支不会被消费完，tee 的背压会反过来卡住返回给播放器的第一个分支。
+ * 桌面端也没有这条路径：media.rs 的 load_segment 是先 bytes().await 收完整
+ * 再 apply_byte_range，从不 clone 一个在途流。H5 的分片改为流式直透 +
+ * 让浏览器按 Cache-Control 本地缓存，见 handleMedia 的 /seg 分支。
  */
 async function withCache(
   request: Request,
@@ -209,33 +213,33 @@ export async function handleMedia(
       return respond(rewritePlaylist(target, source), "application/vnd.apple.mpegurl", "no-store");
     }
 
-    // /seg：子清单需要继续改写，普通分片/密钥流式透传以控制内存
-    const cacheable = !range;
-    return await withCache(request, async () => {
-      const upstream = await fetchBytes(base, target, range);
-      if (!upstream.ok && upstream.status !== 206) return text(`上游返回 HTTP ${upstream.status}`, 502);
-      const contentType = upstream.headers.get("content-type") ?? "";
-      const playlist = /mpegurl/i.test(contentType)
-        || /\.m3u8(\?|$)/i.test(target)
-        || /^#EXTM3U/.test(contentType);
-      if (playlist) {
-        const source = await upstream.text();
-        if (!source.replace(/^\u{feff}/u, "").startsWith("#EXTM3U")) {
-          return text("响应不是 HLS 播放列表", 502);
-        }
-        return respond(rewritePlaylist(target, source), "application/vnd.apple.mpegurl", "no-store");
+    // /seg：子清单继续改写；普通分片/密钥流式直透。
+    // 与 media-cache-audit-20261108.md 的基准一致：成功子清单与分片都给 1 小时缓存，
+    // 只有 Range 206 不缓存。分片不再进 Cache API —— 浏览器按这个头自己缓存，
+    // 边缘再存一份是冗余，且 clone 在途流会引入 tee 背压。
+    const upstream = await fetchBytes(base, target, range);
+    if (!upstream.ok && upstream.status !== 206) return text(`上游返回 HTTP ${upstream.status}`, 502);
+    const contentType = upstream.headers.get("content-type") ?? "";
+    const playlist = /mpegurl/i.test(contentType)
+      || /\.m3u8(\?|$)/i.test(target)
+      || /^#EXTM3U/.test(contentType);
+    if (playlist) {
+      const source = await upstream.text();
+      if (!source.replace(/^\u{feff}/u, "").startsWith("#EXTM3U")) {
+        return text("响应不是 HLS 播放列表", 502);
       }
-      const headers = new Headers();
-      headers.set("Content-Type", contentType || guessMime(target));
-      headers.set("Cache-Control", upstream.status === 206 ? "no-store" : "public, max-age=3600");
-      headers.set("Accept-Ranges", "bytes");
-      headers.set("X-Content-Type-Options", "nosniff");
-      for (const key of ["content-length", "content-range", "etag", "last-modified"]) {
-        const value = upstream.headers.get(key);
-        if (value) headers.set(key, value);
-      }
-      return new Response(upstream.body, { status: upstream.status, headers });
-    }, cacheable, ctx);
+      return respond(rewritePlaylist(target, source), "application/vnd.apple.mpegurl", "public, max-age=3600");
+    }
+    const headers = new Headers();
+    headers.set("Content-Type", contentType || guessMime(target));
+    headers.set("Cache-Control", upstream.status === 206 ? "no-store" : "public, max-age=3600");
+    headers.set("Accept-Ranges", "bytes");
+    headers.set("X-Content-Type-Options", "nosniff");
+    for (const key of ["content-length", "content-range", "etag", "last-modified"]) {
+      const value = upstream.headers.get(key);
+      if (value) headers.set(key, value);
+    }
+    return new Response(upstream.body, { status: upstream.status, headers });
   } catch (error) {
     return text(error instanceof Error ? error.message : "媒体代理失败", 502);
   }

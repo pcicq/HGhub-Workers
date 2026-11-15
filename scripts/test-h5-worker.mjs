@@ -176,35 +176,74 @@ let cookie = "";
   check("未知 /hg 路径 → 404", r.status === 404);
 }
 
-/* ── 媒体缓存：写入失败不得重复回源，且写入要走后台任务 ── */
+/* ── 媒体缓存与分片直透：对齐 media.rs，流式分片绝不 clone 进 Cache API ── */
 {
   const savedFetch = globalThis.fetch;
   const savedCaches = globalThis.caches;
+  const jpeg = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46]);
   let fetches = 0;
+  let cacheOpens = 0;
+  let signalSeen = false;
   const tasks = [];
-  globalThis.fetch = async () => {
+  globalThis.fetch = async (input, init) => {
     fetches += 1;
+    if (init?.signal instanceof AbortSignal) signalSeen = true;
+    const url = new URL(typeof input === "string" ? input : input.url);
+    if (url.pathname.endsWith(".m3u8")) {
+      return new Response("#EXTM3U\n#EXT-X-TARGETDURATION:4\nhttps://cdn.example.com/1.ts\n", {
+        status: 200, headers: { "content-type": "application/vnd.apple.mpegurl" },
+      });
+    }
+    if (url.pathname.endsWith(".jpg")) {
+      return new Response(jpeg, { status: 200, headers: { "content-type": "image/jpeg" } });
+    }
     return new Response("0123456789", {
-      status: 200,
-      headers: { "content-type": "video/mp2t", "content-length": "10" },
+      status: 200, headers: { "content-type": "video/mp2t", "content-length": "10" },
     });
   };
   globalThis.caches = {
-    open: async () => ({
-      match: async () => undefined,
-      put: async () => { throw new Error("cache write failed"); },
-    }),
+    open: async () => {
+      cacheOpens += 1;
+      return {
+        match: async () => undefined,
+        put: async () => { throw new Error("cache write failed"); },
+      };
+    },
   };
+  const mediaCtx = { waitUntil: (task) => tasks.push(task) };
   try {
-    const r = await worker.fetch(
-      req(`/hg/seg?u=${encodeURIComponent("https://cdn.example.com/seg.ts")}`, { headers: { cookie } }),
-      env,
-      { waitUntil: (task) => tasks.push(task) },
+    // 封面：完整缓冲在内存，缓存写失败只降级，不二次回源
+    const img = await worker.fetch(
+      req(`/hg/img?u=${encodeURIComponent("https://cdn.example.com/cover.jpg")}`, { headers: { cookie } }),
+      env, mediaCtx,
     );
-    check("缓存写入失败仍返回分片", r.status === 200 && (await r.text()) === "0123456789");
-    check("缓存写入失败不重复回源", fetches === 1);
-    check("缓存写入交给 waitUntil 后台执行", tasks.length === 1);
+    check("封面缓存写失败仍返回图片", img.status === 200 && (await img.arrayBuffer()).byteLength === jpeg.length);
+    check("封面缓存写失败不重复回源", fetches === 1);
+    check("封面缓存写入交后台任务", tasks.length === 1);
     await Promise.allSettled(tasks);
+
+    // 分片：流式直透，不 tee、不进 Cache API；浏览器靠 Cache-Control 自己缓存
+    const before = { fetches, cacheOpens, tasks: tasks.length };
+    const seg = await worker.fetch(
+      req(`/hg/seg?u=${encodeURIComponent("https://cdn.example.com/seg.ts")}`, { headers: { cookie } }),
+      env, mediaCtx,
+    );
+    check("分片流式直透", seg.status === 200 && (await seg.text()) === "0123456789");
+    check("分片只回源一次", fetches === before.fetches + 1);
+    check("分片不触碰 Cache API", cacheOpens === before.cacheOpens);
+    check("分片不产生缓存后台任务", tasks.length === before.tasks);
+    check("分片给浏览器 1 小时缓存", (seg.headers.get("cache-control") ?? "").includes("max-age=3600"));
+
+    // 子清单：继续改写 URI，并恢复上游审计确认的 1 小时缓存
+    const sub = await worker.fetch(
+      req(`/hg/seg?u=${encodeURIComponent("https://cdn.example.com/sub.m3u8")}`, { headers: { cookie } }),
+      env, mediaCtx,
+    );
+    const subBody = await sub.text();
+    check("子清单 URI 继续改写", sub.status === 200 && subBody.includes("/hg/seg?u=")
+      && !subBody.includes("https://cdn.example.com/1.ts"));
+    check("子清单恢复 1 小时缓存", (sub.headers.get("cache-control") ?? "").includes("max-age=3600"));
+    check("出站请求带超时 signal", signalSeen);
   } finally {
     globalThis.fetch = savedFetch;
     globalThis.caches = savedCaches;
