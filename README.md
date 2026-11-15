@@ -59,6 +59,8 @@ corepack pnpm h5:dev           # http://localhost:8787
 
 脚本内部一律用 `npm run` / `node` / `npx`，因此只有 `corepack pnpm`、没有 `pnpm` shim 的环境也能跑。部署步骤与验证判据见 [docs/h5-channel-deploy.md](docs/h5-channel-deploy.md)，能力边界与风险见 [docs/h5-channel.md](docs/h5-channel.md)。
 
+兼容 Cloudflare Pages 与阿里云 ESA 函数和 Pages：`corepack pnpm h5:pages:build` 生成 `pages-dist/`（`_worker.js` / `esa-worker.js`）与 `esa-static/`，`dist/` 与 Workers 链路不受影响，详见 [docs/h5-platforms.md](docs/h5-platforms.md)。
+
 ## H5 渠道（实验性）
 
 单个 Worker 同时托管同一份前端产物与同源代理，接口与登录凭据只留在服务端，不对公开访客开放。默认强制**访问口令 + 同源校验**。线路能力与桌面端对齐：固定线路、自定义线路、地址发布页镜像、手动探测、自动选线与回切主站都可用，当前线路存在加密 Cookie 中。

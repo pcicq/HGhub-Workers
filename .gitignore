@@ -6,6 +6,8 @@ node_modules_*
 # 构建产物
 dist/
 dist-ssr/
+pages-dist/
+esa-static/
 test-results/
 src-tauri/target/
 src-tauri/gen/

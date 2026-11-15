@@ -15,7 +15,10 @@
     "h5:ci": "npm run h5:check && npm run h5:build",
     "h5:preview": "npx --yes wrangler@4 versions upload --config workers/wrangler.toml",
     "h5:dev": "npx --yes wrangler@4 dev --config workers/wrangler.toml",
-    "h5:deploy": "npx --yes wrangler@4 deploy --config workers/wrangler.toml"
+    "h5:deploy": "npx --yes wrangler@4 deploy --config workers/wrangler.toml",
+    "h5:pages:build": "npm run h5:build && node scripts/build-pages.mjs",
+    "h5:pages:dev": "npx --yes wrangler@4 pages dev pages-dist --env-file workers/.dev.vars --compatibility-date=2026-11-15 --port 8788",
+    "h5:pages:deploy": "npx --yes wrangler@4 pages deploy pages-dist --project-name hghub-workers-pages"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.12.4",
