@@ -1,0 +1,47 @@
+{
+  "name": "hghub-workers",
+  "private": true,
+  "version": "2.1.0",
+  "license": "PolyForm-Noncommercial-1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "test:h5-coverage": "node scripts/test-h5-rpc-coverage.mjs",
+    "test:h5-worker": "node scripts/test-h5-worker.mjs",
+    "h5:build": "npm run build && node scripts/test-h5-rpc-coverage.mjs",
+    "h5:check": "tsc -p workers/tsconfig.json --noEmit && node scripts/test-h5-rpc-coverage.mjs && node scripts/test-h5-worker.mjs",
+    "h5:ci": "npm run h5:check && npm run h5:build",
+    "h5:preview": "npx --yes wrangler@4 versions upload --config workers/wrangler.toml",
+    "h5:dev": "npx --yes wrangler@4 dev --config workers/wrangler.toml",
+    "h5:deploy": "npx --yes wrangler@4 deploy --config workers/wrangler.toml"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2.12.4",
+    "@tauri-apps/plugin-clipboard-manager": "2.5.0",
+    "clsx": "2.1.1",
+    "dompurify": "3.4.17",
+    "hls.js": "1.6.19",
+    "react": "19.2.6",
+    "react-dom": "19.2.6",
+    "tailwind-merge": "3.4.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "4.1.17",
+    "@tauri-apps/cli": "2.10.1",
+    "@types/node": "22.19.17",
+    "@types/react": "19.2.7",
+    "@types/react-dom": "19.2.3",
+    "@vitejs/plugin-react": "5.1.1",
+    "playwright-core": "1.63.0",
+    "tailwindcss": "4.1.17",
+    "typescript": "5.9.3",
+    "vite": "7.3.2"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild"
+    ]
+  }
+}

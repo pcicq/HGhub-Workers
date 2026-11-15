@@ -1,0 +1,44 @@
+# 依赖（不带斜杠，同时覆盖目录与验证用的符号链接）
+node_modules
+node_modules_*
+.pnpm-store/
+
+# 构建产物
+dist/
+dist-ssr/
+test-results/
+src-tauri/target/
+src-tauri/gen/
+*.local
+
+# 编辑器 / 系统
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+Thumbs.db
+*.log
+
+# 签名与密钥（务必不要提交）
+*.keystore
+*.jks
+*.p12
+*.pem
+.env
+.env.*
+workers/.dev.vars
+
+# Wrangler 本地状态（wrangler dev / dry-run 生成，不提交）
+.wrangler/
+
+# 本项目用 pnpm；npx / npm 临时执行会在根目录生成 npm lockfile，不提交
+package-lock.json
+
+# WorkBuddy 本地工作记忆（工具数据，不提交到上游仓库）
+.workbuddy/memory/
+
+# API
+docs/API.md
+
+# Agent instructions (local)
+AGENTS.md
