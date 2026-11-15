@@ -272,6 +272,10 @@ Workers Free 计划（[官方 Limits](https://developers.cloudflare.com/workers/
 | Build command | `npm run h5:build` |
 | Deploy command | `npm run h5:deploy` |
 | Preview command | `npm run h5:preview` |
+| 依赖安装 / Install command | 留空交给平台自动执行 `pnpm install --frozen-lockfile`；**绝不要**把 `h5:deploy` 填到这里 |
+| 输出目录 | Workers 不需要（`assets.directory = "../dist"` 由 `wrangler.toml` 声明），不是 Pages 的静态输出目录 |
+
+> 🔴 **认准是 Workers 项目，不是 Pages。** 若配置界面出现「框架预设 / 输出目录 / 安装命令」这一组字段，那是 **Pages** 的构建表单：Pages 只托管静态 `dist/`，不会执行 `wrangler deploy`，`workers/wrangler.toml` 的 `ASSETS` 绑定、`run_worker_first`、CSP 与 `/hg/*` 代理全部不会生效——页面能打开，但所有 `/hg/*` 接口 404。官方 Workers Builds 的字段只有 Build / Deploy / Preview command + Root directory + Git branch。判据：项目 URL 是 `*.workers.dev`（对），不是 `*.pages.dev`（错）。选错就删掉项目重建，项目名仍填 `hghub-workers-h5`。
 
 说明：
 
@@ -318,7 +322,7 @@ packages:
 
 | 链路 | 做什么 | 凭据 |
 | --- | --- | --- |
-| `.github/workflows/ci.yml` 的 `h5` job | 跑 `pnpm h5:ci`：Worker 类型检查 + 契约校验 + 20 项冒烟 + 前端构建 | 无，**不部署** |
+| `.github/workflows/ci.yml` 的 `h5` job | 跑 `pnpm h5:ci`：Worker 类型检查 + 契约校验 + 23 项冒烟 + 前端构建 | 无，**不部署** |
 | Cloudflare Workers Builds | 从 GitHub 拉取、构建、部署到 CF 生产 | CF 自动生成 API token |
 | 其它云平台 | 复用同一份 `dist/` 与 `h5:ci` 门禁 | 各平台自管，见 [h5-platforms.md](./h5-platforms.md) |
 

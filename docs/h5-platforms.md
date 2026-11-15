@@ -12,7 +12,7 @@
 | env 契约 | `Env` / `PlatformAdapter` | `workers/src/policy.ts`、`workers/src/platform.ts` |
 | 配置名 | `H5_ACCESS_KEY`、`H5_ALLOWED_ORIGIN`、`H5_EXTRA_BASES` | `workers/src/platform.ts` 的 `createEnv()` |
 | 产物 | 唯一一份 `dist/`，由 Worker Assets 托管，渠道靠运行时判断 | `h5:build` |
-| 质量门禁 | `h5:ci` = Worker tsc + 契约校验 + 20 项冒烟 + 前端构建 | `package.json`、`.github/workflows/ci.yml` 的 `h5` job |
+| 质量门禁 | `h5:ci` = Worker tsc + 契约校验 + 23 项冒烟 + 前端构建 | `package.json`、`.github/workflows/ci.yml` 的 `h5` job |
 | 部署命令 | `h5:deploy` / `h5:preview`，内部固定 `wrangler@4` 与 `--config` | `package.json` |
 | 安全策略 | 口令 + 同源 + 加密 Cookie + SSRF 校验 + CSP | Worker 内部，与平台无关 |
 
@@ -58,7 +58,7 @@ Deno.serve((request) => worker.fetch(request, env));
 
 | 平台 | fetch 入口 | 配置来源 | 静态资源方案 | 路由要求 | 本仓库状态 |
 | --- | --- | --- | --- | --- | --- |
-| Cloudflare Workers | `export default { fetch }` | env 绑定 / `wrangler secret` | `ASSETS` + `run_worker_first = true` | `workers/wrangler.toml` | ✅ 已验证（`deploy --dry-run` + 20 项冒烟） |
+| Cloudflare Workers | `export default { fetch }` | env 绑定 / `wrangler secret` | `ASSETS` + `run_worker_first = true` | `workers/wrangler.toml` | ✅ 已验证（`deploy --dry-run` + 23 项冒烟） |
 | Deno Deploy | `Deno.serve()` | `Deno.env.get()` | 自行读 `dist/` 或外置对象存储 | 把 `/*` 指向函数 | 契约已备，未实机验证 |
 | Vercel（Fluid Compute / Functions） | 平台 handler 导出 | `process.env` | 平台静态托管 + rewrites | 需 `/*` rewrite 到函数 | 契约已备，未实机验证 |
 | Netlify Edge Functions | `export default` + `config` | `Deno.env` / 平台环境变量 | 平台静态托管 + redirects | 需 `/*` redirect 到函数 | 契约已备，未实机验证 |

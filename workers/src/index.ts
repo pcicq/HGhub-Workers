@@ -8,7 +8,7 @@ import {
   type Env,
 } from "./policy";
 import { createRpcContext, dispatchRpc, type Args } from "./rpc";
-import { handleMedia, type MediaRoute } from "./media";
+import { handleMedia, type CacheContext, type MediaRoute } from "./media";
 
 // 对外暴露平台适配契约：其它 WinterTC 运行时用 createEnv() 构造 env 后复用 default.fetch
 export { createEnv, type PlatformAdapter } from "./platform";
@@ -149,7 +149,7 @@ async function rpc(request: Request, env: Env): Promise<Response> {
 }
 
 export default {
-  async fetch(request: Request, env: Env): Promise<Response> {
+  async fetch(request: Request, env: Env, ctx?: CacheContext): Promise<Response> {
     const url = new URL(request.url);
     const path = url.pathname;
 
@@ -179,7 +179,7 @@ export default {
       const route = path.slice(MEDIA_PREFIX.length + 1) as MediaRoute;
       if ((route === "img" || route === "hls" || route === "seg") && request.method === "GET") {
         const base = (await createRpcContext(request, env)).base;
-        return handleMedia(request, env, base, route);
+        return handleMedia(request, env, base, route, ctx);
       }
       return text("not found", 404);
     }

@@ -120,21 +120,41 @@ function respond(body: Uint8Array<ArrayBuffer> | string, contentType: string, ca
   });
 }
 
-/** 封面与静态分片做边缘缓存，避免重复请求给上游加压；失败不影响取流 */
-async function withCache(request: Request, produce: () => Promise<Response>, enabled: boolean): Promise<Response> {
+/** 平台传入的后台任务句柄；本地冒烟测试不传也能跑 */
+export interface CacheContext {
+  waitUntil(task: Promise<unknown>): void;
+}
+
+/**
+ * 封面与静态分片做边缘缓存，避免重复请求给上游加压。
+ * 两条性能语义不能改回去：
+ *  1. 缓存写入必须放到后台，`await cache.put()` 会等整个分片下载完才返回，
+ *     首字节被阻塞、播放器拿不到流，表现为起播慢和卡顿；
+ *  2. 缓存读写失败只降级为「不缓存」，绝不能重新 produce() 回源一次，
+ *     否则单次分片要付两次上游往返。
+ */
+async function withCache(
+  request: Request,
+  produce: () => Promise<Response>,
+  enabled: boolean,
+  ctx?: CacheContext,
+): Promise<Response> {
   if (!enabled || request.method !== "GET") return produce();
+  let cache: Cache | undefined;
   try {
-    const cache = await caches.open("hghubx-h5-media");
+    cache = await caches.open("hghubx-h5-media");
     const hit = await cache.match(request);
     if (hit) return hit;
-    const fresh = await produce();
-    if (fresh.status === 200 && fresh.headers.get("cache-control")?.includes("max-age")) {
-      await cache.put(request, fresh.clone());
-    }
-    return fresh;
   } catch {
-    return produce();
+    cache = undefined;
   }
+  const fresh = await produce();
+  if (cache && fresh.status === 200 && fresh.headers.get("cache-control")?.includes("max-age")) {
+    const task = cache.put(request, fresh.clone()).catch(() => {});
+    if (ctx) ctx.waitUntil(task);
+    else void task;
+  }
+  return fresh;
 }
 
 function upstreamHeaders(base: string): Record<string, string> {
@@ -150,7 +170,7 @@ async function fetchBytes(base: string, target: string, range: string | null): P
 /* ── 入口 ───────────────────────────────────────────────── */
 
 export async function handleMedia(
-  request: Request, _env: Env, base: string, route: MediaRoute,
+  request: Request, _env: Env, base: string, route: MediaRoute, ctx?: CacheContext,
 ): Promise<Response> {
   const raw = new URL(request.url).searchParams.get("u");
   if (!raw) return text("missing u", 400);
@@ -176,7 +196,7 @@ export async function handleMedia(
           catch { return text("封面解密失败", 502); }
         }
         return respond(bytes, imageKind(bytes) ?? "image/jpeg", "public, max-age=86400");
-      }, true);
+      }, true, ctx);
     }
 
     if (route === "hls") {
@@ -215,7 +235,7 @@ export async function handleMedia(
         if (value) headers.set(key, value);
       }
       return new Response(upstream.body, { status: upstream.status, headers });
-    }, cacheable);
+    }, cacheable, ctx);
   } catch (error) {
     return text(error instanceof Error ? error.message : "媒体代理失败", 502);
   }

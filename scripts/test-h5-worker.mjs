@@ -176,6 +176,41 @@ let cookie = "";
   check("未知 /hg 路径 → 404", r.status === 404);
 }
 
+/* ── 媒体缓存：写入失败不得重复回源，且写入要走后台任务 ── */
+{
+  const savedFetch = globalThis.fetch;
+  const savedCaches = globalThis.caches;
+  let fetches = 0;
+  const tasks = [];
+  globalThis.fetch = async () => {
+    fetches += 1;
+    return new Response("0123456789", {
+      status: 200,
+      headers: { "content-type": "video/mp2t", "content-length": "10" },
+    });
+  };
+  globalThis.caches = {
+    open: async () => ({
+      match: async () => undefined,
+      put: async () => { throw new Error("cache write failed"); },
+    }),
+  };
+  try {
+    const r = await worker.fetch(
+      req(`/hg/seg?u=${encodeURIComponent("https://cdn.example.com/seg.ts")}`, { headers: { cookie } }),
+      env,
+      { waitUntil: (task) => tasks.push(task) },
+    );
+    check("缓存写入失败仍返回分片", r.status === 200 && (await r.text()) === "0123456789");
+    check("缓存写入失败不重复回源", fetches === 1);
+    check("缓存写入交给 waitUntil 后台执行", tasks.length === 1);
+    await Promise.allSettled(tasks);
+  } finally {
+    globalThis.fetch = savedFetch;
+    globalThis.caches = savedCaches;
+  }
+}
+
 if (failed) {
   console.error(`H5 Worker 冒烟测试失败（${failed} 项）`);
   process.exit(1);
