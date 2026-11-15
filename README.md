@@ -57,9 +57,60 @@ cp workers/.dev.vars.example workers/.dev.vars   # 填入自己的 H5_ACCESS_KEY
 corepack pnpm h5:dev           # http://localhost:8787
 ```
 
-脚本内部一律用 `npm run` / `node` / `npx`，因此只有 `corepack pnpm`、没有 `pnpm` shim 的环境也能跑。部署步骤与验证判据见 [docs/h5-channel-deploy.md](docs/h5-channel-deploy.md)，能力边界与风险见 [docs/h5-channel.md](docs/h5-channel.md)。
+脚本内部一律用 `npm run` / `node` / `npx`，因此只有 `corepack pnpm`、没有 `pnpm` shim 的环境也能跑。部署见下节；完整命令与排错见 [docs/h5-channel-deploy.md](docs/h5-channel-deploy.md)，平台差异见 [docs/h5-platforms.md](docs/h5-platforms.md)，能力边界与风险见 [docs/h5-channel.md](docs/h5-channel.md)。
 
-兼容 Cloudflare Pages 与阿里云 ESA 函数和 Pages：`corepack pnpm h5:pages:build` 生成 `pages-dist/`（`_worker.js` / `esa-worker.js`）与 `esa-static/`，`dist/` 与 Workers 链路不受影响，详见 [docs/h5-platforms.md](docs/h5-platforms.md)。
+## 部署方式
+
+两条链路共用同一份业务代码与 `h5:ci` 门禁，差别只在构建产物与入口。**命令由你在本地/控制台执行**，仓库不代为部署；口令一律写入平台 Secret（变量），不进仓库、不进 `[vars]`。
+
+| 链路 | 构建 | 部署 | 产物 |
+| --- | --- | --- | --- |
+| Cloudflare Workers | `h5:build` | `h5:deploy`，或 Workers Builds Git 集成 | `dist/` + `workers/wrangler.toml` |
+| 阿里云 ESA 函数和 Pages | `h5:pages:build` | 控制台 Git 集成（无脚本） | `esa-static/` + `pages-dist/esa-worker.js` |
+
+> 另有 Cloudflare Pages（advanced mode）兼容链路，产物同为 `pages-dist/_worker.js`，命令见 [docs/h5-platforms.md](docs/h5-platforms.md)。
+
+### Cloudflare Workers
+
+```sh
+corepack pnpm h5:build                                     # 生成 dist/
+npx --yes wrangler@4 login && npx --yes wrangler@4 whoami    # 登录并确认账号
+npx --yes wrangler@4 deploy --dry-run --config workers/wrangler.toml   # 预演，不上传
+corepack pnpm h5:deploy                                    # 首次部署，记下 *.workers.dev 地址
+npx --yes wrangler@4 secret put H5_ACCESS_KEY --config workers/wrangler.toml   # 交互输入口令
+```
+
+- **顺序不能反**：`secret put` 会再部署一个版本，必须在 Worker 创建之后执行。
+- **Git 集成（Workers Builds）**：Build `npm run h5:build`、Deploy `npm run h5:deploy`、Preview `npm run h5:preview`；分支填 `master`（不是 `main`），项目名填 `hghub-workers-h5`，口令加到 `Settings → Variables & Secrets`（Secret 类型，不是 Build Variables）。
+- 认准 **Workers 项目**（`*.workers.dev`），不是 Pages（`*.pages.dev`）。
+
+### 阿里云 ESA 函数和 Pages
+
+控制台 Git 集成部署，表单按此填写：
+
+| 字段 | 值 |
+| --- | --- |
+| 生产分支 / 根目录 | `master` / `/` |
+| 构建命令 | `npm run h5:pages:build`（**不是** `h5:build`） |
+| 静态资源目录 | `./esa-static`（**不能**填 `./dist`，否则 `index.html` 绕过解锁页） |
+| 函数文件路径 | `./pages-dist/esa-worker.js` |
+| Node.js 版本 | `22.x` |
+| 函数变量 | `H5_ACCESS_KEY`（勾选加密存储），可选 `H5_ALLOWED_ORIGIN`、`H5_EXTRA_BASES` |
+
+- 不要配 `assets.notFoundStrategy`，否则 `/` 不落到函数，解锁页失效。
+- 函数变量改动后需**重新生成版本并发布**才生效。
+- 单次执行最多 4 个 `fetch`：浏览 / 搜索 / 播放正常，`line_probe`、`line_auto`、`line_mirrors` 必然超限（属降级，非缺陷）。
+
+### 部署后验证（两条链路通用）
+
+| 检查 | 期望 |
+| --- | --- |
+| `curl -sS $H5_URL/hg/health` | 200，`channel` 为 `h5`；未配口令时 503 属预期 |
+| 未解锁访问 `/` | 只有口令解锁页，不加载业务 JS（ESA 若返回 404 或业务页 = 该链路不可用） |
+| 输入口令 | 303 回 `/`，返回业务页且响应头带 `Content-Security-Policy` |
+| `/assets/*`、`/logo.svg` | 200 |
+
+逐项判据见 [docs/h5-channel-deploy.md](docs/h5-channel-deploy.md) 步骤 6。
 
 ## H5 渠道（实验性）
 
