@@ -17,6 +17,10 @@ export interface Env {
 export type Session = { origin: string; token: string; user: Record<string, unknown> | null };
 export const emptySession = (origin: string): Session => ({ origin, token: "", user: null });
 
+/** 当前线路：base 为规整后的 HTTPS origin，custom 表示用户显式保存过自定义线路 */
+export type LineConfig = { base: string; custom: boolean };
+export const defaultLine = (): LineConfig => ({ base: DEFAULT_BASE, custom: false });
+
 const encoder = new TextEncoder();
 
 /* ── 编码辅助 ───────────────────────────────────────────── */
@@ -132,8 +136,8 @@ export async function sealSession(secret: string, session: Session): Promise<str
   return seal(secret, "session", session);
 }
 
-export async function sealLine(secret: string, base: string): Promise<string> {
-  return seal(secret, "line", { base });
+export async function sealLine(secret: string, line: LineConfig): Promise<string> {
+  return seal(secret, "line", line);
 }
 
 /** 会话与线路都绑定 origin：切换线路后旧 token 不会再被发给新站点 */
@@ -154,27 +158,44 @@ export function lineCookie(value: string, maxAge: number): string {
   return cookieHeader(COOKIE_LINE, value, maxAge);
 }
 
-/** 允许作为上游的 origin 白名单；只在服务端配置，前端不能注入 */
+/**
+ * 线路地址归一化：对齐 src-tauri/src/net.rs 的 normalize_base。
+ * 必须是纯 HTTPS origin（无路径 / 查询 / 片段 / 认证信息），并复用 parseTarget
+ * 拦掉本机、内网、保留地址与应用内部协议主机名。
+ */
+export function normalizeBase(raw: string): string | null {
+  if (!raw || raw.length > 2048) return null;
+  try {
+    const url = new URL(parseTarget(raw.trim()));
+    if (url.protocol !== "https:" || url.pathname !== "/" || url.search || url.hash) return null;
+    return url.origin;
+  } catch {
+    return null;
+  }
+}
+
+/** 服务端配置里额外可信的 origin；固定线路始终包含在内 */
 export function allowedBases(env: Env): string[] {
   const set = new Set<string>(FIXED_LINES.map((line) => line.url));
   for (const raw of (env.H5_EXTRA_BASES ?? "").split(",")) {
-    const value = raw.trim();
-    if (!value) continue;
-    try {
-      const url = new URL(value);
-      if (url.protocol === "https:" && url.pathname === "/" && !url.search && !url.hash
-        && !url.username && !url.password) set.add(url.origin);
-    } catch { /* 忽略无效配置 */ }
+    const base = normalizeBase(raw);
+    if (base) set.add(base);
   }
   return [...set];
 }
 
-/** 读取用户选择的线路，只允许白名单内的值 */
-export async function readLine(request: Request, env: Env): Promise<string> {
+/**
+ * 读取用户选择的线路。Cookie 由服务端用 H5_ACCESS_KEY 密封，客户端无法伪造，
+ * 因此这里不再用固定白名单限死可切换的地址（否则自定义/镜像线路无法生效）；
+ * 仍然复核地址格式，保证旧版或损坏的 Cookie 不会把请求带向非法目标。
+ */
+export async function readLine(request: Request, env: Env): Promise<LineConfig> {
   const raw = readCookie(request, COOKIE_LINE);
-  const data = raw ? await unseal<{ base: string }>(env.H5_ACCESS_KEY, "line", raw) : null;
-  const bases = allowedBases(env);
-  return data && bases.includes(data.base) ? data.base : DEFAULT_BASE;
+  const data = raw ? await unseal<LineConfig>(env.H5_ACCESS_KEY, "line", raw) : null;
+  if (!data || typeof data.base !== "string") return defaultLine();
+  const base = normalizeBase(data.base);
+  if (!base) return defaultLine();
+  return { base, custom: data.custom === true && base !== DEFAULT_BASE };
 }
 
 /* ── 同源校验 ───────────────────────────────────────────── */

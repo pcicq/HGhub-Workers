@@ -12,7 +12,7 @@
 | env 契约 | `Env` / `PlatformAdapter` | `workers/src/policy.ts`、`workers/src/platform.ts` |
 | 配置名 | `H5_ACCESS_KEY`、`H5_ALLOWED_ORIGIN`、`H5_EXTRA_BASES` | `workers/src/platform.ts` 的 `createEnv()` |
 | 产物 | 唯一一份 `dist/`，由 Worker Assets 托管，渠道靠运行时判断 | `h5:build` |
-| 质量门禁 | `h5:ci` = Worker tsc + 契约校验 + 23 项冒烟 + 前端构建 | `package.json`、`.github/workflows/ci.yml` 的 `h5` job |
+| 质量门禁 | `h5:ci` = Worker tsc + 契约校验 + 45 项冒烟 + 前端构建 | `package.json`、`.github/workflows/ci.yml` 的 `h5` job |
 | 部署命令 | `h5:deploy` / `h5:preview`，内部固定 `wrangler@4` 与 `--config` | `package.json` |
 | 安全策略 | 口令 + 同源 + 加密 Cookie + SSRF 校验 + CSP | Worker 内部，与平台无关 |
 
@@ -58,7 +58,7 @@ Deno.serve((request) => worker.fetch(request, env));
 
 | 平台 | fetch 入口 | 配置来源 | 静态资源方案 | 路由要求 | 本仓库状态 |
 | --- | --- | --- | --- | --- | --- |
-| Cloudflare Workers | `export default { fetch }` | env 绑定 / `wrangler secret` | `ASSETS` + `run_worker_first = true` | `workers/wrangler.toml` | ✅ 已验证（`deploy --dry-run` + 23 项冒烟） |
+| Cloudflare Workers | `export default { fetch }` | env 绑定 / `wrangler secret` | `ASSETS` + `run_worker_first = true` | `workers/wrangler.toml` | ✅ 已验证（`deploy --dry-run` + 45 项冒烟） |
 | Deno Deploy | `Deno.serve()` | `Deno.env.get()` | 自行读 `dist/` 或外置对象存储 | 把 `/*` 指向函数 | 契约已备，未实机验证 |
 | Vercel（Fluid Compute / Functions） | 平台 handler 导出 | `process.env` | 平台静态托管 + rewrites | 需 `/*` rewrite 到函数 | 契约已备，未实机验证 |
 | Netlify Edge Functions | `export default` + `config` | `Deno.env` / 平台环境变量 | 平台静态托管 + redirects | 需 `/*` redirect 到函数 | 契约已备，未实机验证 |
@@ -71,9 +71,10 @@ Deno.serve((request) => worker.fetch(request, env));
 
 - 本仓库**只提供 Cloudflare 的 `workers/wrangler.toml` 与完整部署链路**；不生成 `vercel.json`、`netlify.toml`、`deno.json` 等未经实机验证的平台配置——放进去却不能跑，比不放更糟。
 - 要真正接入某个平台，最小改动是三件：实现 `get` 与 `fetchAsset`、写一个约 15 行的薄入口、配一条把所有路径指向函数的路由。**核心逻辑零改动**，`h5:ci` 可直接复用。
-- 两个硬前提，缺一不可：
+- 三个硬前提，缺一不可：
   1. **所有请求（含 HTML）必须先经过函数**。解锁页与 CSP 注入依赖这一点；若平台静态资源优先于函数，未解锁用户会直接拿到业务 JS。
   2. **运行时必须支持 Web Crypto 的 AES-GCM**（会话/线路 Cookie 加解密）**与 AES-CBC**（封面解密），以及流式 `Response` body 与 Range 透传。
+  3. **线路命令会并发发起到外部站点的请求**：`line_mirrors` 最多 4 个子请求，`line_probe` 最多 24 个，`line_auto` 最多 11 个，靠 `AbortController` + `setTimeout` 做 8 秒 / 5 秒超时。接平台前确认它的出站请求配额、并发限制与定时器语义；配额低的平台按 `workers/src/rpc.ts` 的 `PROBE_MAX` / `PROBE_CHUNK` 调小，别整段删掉超时。
 
 ## 风险标注
 

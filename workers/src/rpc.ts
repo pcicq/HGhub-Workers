@@ -3,10 +3,14 @@
 // body = { method, path, body(base64 JSON), content_type }，响应取 { status:1, data }。
 import { APP_VERSION, DEFAULT_BASE, FIXED_LINES, SESSION_MAX_AGE, UA } from "./config";
 import {
-  allowedBases, emptySession, fetchGuarded, lineCookie, readLine, readSession,
-  sealLine, sealSession, sessionCookie, type Env, type Session,
+  allowedBases, defaultLine, emptySession, fetchGuarded, lineCookie, normalizeBase,
+  readLine, readSession, sealLine, sealSession, sessionCookie,
+  type Env, type LineConfig, type Session,
 } from "./policy";
 import { b64 } from "./policy";
+import {
+  autoCandidates, deadline, loadMirrors, verifyPublishedOrigin, type MirrorItem,
+} from "./lines";
 
 export type Args = Record<string, unknown>;
 type Handler = (a: Args, c: RpcContext) => unknown | Promise<unknown>;
@@ -15,6 +19,7 @@ export interface RpcContext {
   env: Env;
   request: Request;
   base: string;
+  line: LineConfig;
   session: Session;
   cookies: string[];
   get(path: string): Promise<unknown>;
@@ -22,8 +27,14 @@ export interface RpcContext {
   authed(method: string, path: string, body?: unknown): Promise<unknown>;
   account(method: string, path: string, body: unknown | undefined, a: Args): Promise<unknown>;
   setSession(session: Session | null): Promise<void>;
-  setLine(base: string | null): Promise<void>;
+  setLine(base: string | null, custom?: boolean): Promise<void>;
 }
+
+const AUTO_PROBE_PATH = "/api/videos?page=1&size=1";
+const PROBE_TIMEOUT_MS = 5_000;
+/** 单次 RPC 的探测上限：桌面端可探 60 条，边缘平台要留子请求预算给其它命令 */
+const PROBE_MAX = 24;
+const PROBE_CHUNK = 6;
 
 /* ── 参数辅助 ───────────────────────────────────────────── */
 
@@ -49,7 +60,9 @@ const sortPart = (a: Args): string => {
 
 /* ── 上游边缘信封 ───────────────────────────────────────── */
 
-async function edge(c: RpcContext, method: string, path: string, body?: unknown, token?: string): Promise<unknown> {
+async function edgeAt(
+  origin: string, method: string, path: string, body?: unknown, token?: string, signal?: AbortSignal,
+): Promise<unknown> {
   const envelope = {
     method,
     path,
@@ -59,14 +72,15 @@ async function edge(c: RpcContext, method: string, path: string, body?: unknown,
   const headers: Record<string, string> = {
     "Accept": "application/json",
     "Content-Type": "application/json",
-    "Referer": `${c.base}/`,
+    "Referer": `${origin}/`,
     "User-Agent": UA,
   };
   if (token) headers.Authorization = `Bearer ${token}`;
   let response: Response;
   try {
-    response = await fetchGuarded(`${c.base}/api/edge/request`, {
+    response = await fetchGuarded(`${origin}/api/edge/request`, {
       method: "POST", headers, body: JSON.stringify(envelope),
+      ...(signal ? { signal } : {}),
     });
   } catch (error) {
     // 与 Rust 的 err_text 一样带上链路特征，前端 call() 才会识别为可重试的网络失败
@@ -82,6 +96,9 @@ async function edge(c: RpcContext, method: string, path: string, body?: unknown,
   if (value.status === 1) return value.data ?? null;
   throw typeof value.msg === "string" && value.msg ? value.msg : "接口返回失败";
 }
+
+const edge = (c: RpcContext, method: string, path: string, body?: unknown, token?: string): Promise<unknown> =>
+  edgeAt(c.base, method, path, body, token);
 
 /* ── 账号快照（对齐 api.rs 的 normalize_account） ─────────── */
 
@@ -196,29 +213,84 @@ async function hotSearch(c: RpcContext): Promise<unknown> {
   }
 }
 
-/* ── 线路探测（只碰白名单，不带凭据） ───────────────────── */
+/* ── 线路探测（对齐 lines.rs 的 probe_hit / healthy_video_data） ── */
 
-async function probeLine(url: string): Promise<{ url: string; ok: boolean; status?: number; ms: number; error?: string }> {
-  const started = Date.now();
-  try {
-    const response = await fetchGuarded(url, {
-      method: "GET",
-      headers: { "Accept": "text/html", "User-Agent": UA },
-    });
-    return { url, ok: response.ok, status: response.status, ms: Date.now() - started };
-  } catch (error) {
-    return { url, ok: false, ms: Date.now() - started, error: error instanceof Error ? error.message : String(error) };
+interface Hit {
+  tier: string;
+  url: string;
+  ok: boolean;
+  reachable: boolean;
+  ms: number;
+  status: number | null;
+  error?: string;
+}
+
+function healthyVideoData(value: unknown): boolean {
+  if (!value || typeof value !== "object") return false;
+  const root = value as Record<string, unknown>;
+  if (!Array.isArray(root.items) || !root.pagination || typeof root.pagination !== "object") return false;
+  const pagination = root.pagination as Record<string, unknown>;
+  for (const key of ["page", "size", "pages", "total"]) {
+    if (typeof pagination[key] !== "number") return false;
   }
+  if ((pagination.page as number) <= 0 || (pagination.size as number) <= 0) return false;
+  return root.items.every((item) => {
+    const row = item && typeof item === "object" ? item as Record<string, unknown> : null;
+    return !!row && typeof row.id === "number" && row.id > 0
+      && typeof row.title === "string" && row.title.trim().length > 0;
+  });
+}
+
+/** 用真实内容接口判定「通」，不带任何凭据；首页 HTML 200 不算可用 */
+async function probeHit(tier: string, raw: string): Promise<Hit> {
+  const hit: Hit = { tier, url: raw, ok: false, reachable: false, ms: 0, status: null };
+  const origin = normalizeBase(raw);
+  if (!origin) { hit.error = "线路必须是安全 HTTPS origin"; return hit; }
+  hit.url = origin;
+  const started = Date.now();
+  const timer = deadline(PROBE_TIMEOUT_MS);
+  try {
+    const data = await edgeAt(origin, "GET", AUTO_PROBE_PATH, undefined, undefined, timer.signal);
+    hit.reachable = true;
+    hit.status = 200;
+    hit.ok = healthyVideoData(data);
+    if (!hit.ok) hit.error = "接口未返回有效视频列表数据";
+  } catch (error) {
+    hit.error = typeof error === "string" ? error : error instanceof Error ? error.message : String(error);
+  } finally {
+    hit.ms = Date.now() - started;
+    timer.cancel();
+  }
+  return hit;
+}
+
+function hitJson(hit: Hit): Record<string, unknown> {
+  const out: Record<string, unknown> = {
+    tier: hit.tier, url: hit.url, ok: hit.ok, reachable: hit.reachable, ms: hit.ms, status: hit.status,
+  };
+  if (hit.error) out.error = hit.error;
+  return out;
+}
+
+function pickFromHits(hits: Hit[]): Record<string, unknown> {
+  const candidates = hits.map(hitJson);
+  const winner = hits.filter((hit) => hit.ok).sort((a, b) => a.ms - b.ms)[0];
+  if (!winner) return { base: "", tier: "none", ms: 0, reason: "all-down", candidates };
+  return {
+    base: winner.url, tier: winner.tier, ms: winner.ms,
+    reason: winner.tier === "main" ? "main-ok" : "mirror-ok", candidates,
+  };
 }
 
 /* ── 上下文构造 ─────────────────────────────────────────── */
 
 export async function createRpcContext(request: Request, env: Env): Promise<RpcContext> {
-  const base = await readLine(request, env);
+  const line = await readLine(request, env);
+  const base = line.base;
   const session = await readSession(request, env, base);
   const cookies: string[] = [];
   const ctx: RpcContext = {
-    env, request, base, session, cookies,
+    env, request, base, line, session, cookies,
     get: (path) => edge(ctx, "GET", path, undefined, session.token || undefined),
     post: (path, body) => edge(ctx, "POST", path, body, session.token || undefined),
     authed: (method, path, body) => {
@@ -238,12 +310,15 @@ export async function createRpcContext(request: Request, env: Env): Promise<RpcC
         ctx.session = next;
       }
     },
-    setLine: async (next) => {
+    setLine: async (next, custom = false) => {
       if (!next) {
         cookies.push(lineCookie("", 0));
+        ctx.line = defaultLine();
         ctx.base = DEFAULT_BASE;
       } else {
-        cookies.push(lineCookie(await sealLine(env.H5_ACCESS_KEY, next), SESSION_MAX_AGE));
+        // 与桌面端一致：把默认主站当作自定义保存时，不算自定义线路
+        ctx.line = { base: next, custom: custom && next !== DEFAULT_BASE };
+        cookies.push(lineCookie(await sealLine(env.H5_ACCESS_KEY, ctx.line), SESSION_MAX_AGE));
         ctx.base = next;
       }
       // 线路变化即丢弃会话，避免把旧站点 token 发给新站点
@@ -382,35 +457,78 @@ const COMMANDS: Record<string, Handler> = {
   "api_post_categories": (_a, c) => c.get("/api/site/categories/post"),
   "api_post_category": (a, c) => c.get(`/api/posts/category/${qs(s(a, "route"))}?page=${n(a, "page", 1)}&size=${n(a, "size", 20)}${sortPart(a)}`),
 
-  /* 线路：H5 只允许固定白名单，不开放自定义 / 镜像发布页 */
-  "line_state": (_a, c) => ({ base: c.base, default: DEFAULT_BASE, custom: false, fixed: FIXED_LINES }),
+  /* 线路：与桌面端同语义，区别只在「上游请求由 Worker 代发、线路存加密 Cookie」 */
+  "line_state": (_a, c) => ({
+    base: c.base, default: DEFAULT_BASE, custom: c.line.custom, fixed: FIXED_LINES,
+  }),
   "line_set": async (a, c) => {
-    const next = s(a, "url");
-    if (!allowedBases(c.env).includes(next)) throw "H5 渠道只允许切换固定线路";
-    if (next !== c.base) await c.setLine(next);
+    const next = normalizeBase(s(a, "url"));
+    if (!next) throw "线路地址无效（需要纯 HTTPS 站点地址）";
+    // 固定线路、服务端额外配置、可信发布页镜像才允许非显式自定义切换
+    if (!allowedBases(c.env).includes(next) && !await verifyPublishedOrigin(next, c.base)) {
+      throw "线路不在固定线路或可信发布页清单中";
+    }
+    if (next !== c.base) await c.setLine(next, false);
     return next;
   },
-  "line_custom_set": () => { throw "H5 渠道不支持自定义线路，请在服务端白名单中配置"; },
-  "line_reset": async (_a, c) => { await c.setLine(DEFAULT_BASE); return { base: DEFAULT_BASE, custom: false }; },
+  "line_custom_set": async (a, c) => {
+    const next = normalizeBase(s(a, "url"));
+    if (!next) throw "线路地址无效（需要纯 HTTPS 站点地址，禁止内网）";
+    await c.setLine(next, true);
+    return { base: next, custom: c.line.custom };
+  },
+  "line_reset": async (_a, c) => { await c.setLine(null); return { base: DEFAULT_BASE, custom: false }; },
   "line_cancel": () => null,
-  "line_mirrors": () => ({ source: "h5", items: [], recommended: [] }),
+  "line_mirrors": (_a, c) => loadMirrors(c.base),
   "line_probe": async (a) => {
     const urls = (Array.isArray(a.urls) ? a.urls : [])
-      .filter((v): v is string => typeof v === "string").slice(0, 5);
-    return Promise.all(urls.map(probeLine));
+      .filter((v): v is string => typeof v === "string").slice(0, PROBE_MAX);
+    const out: Record<string, unknown>[] = [];
+    for (let at = 0; at < urls.length; at += PROBE_CHUNK) {
+      const hits = await Promise.all(urls.slice(at, at + PROBE_CHUNK).map((url) => probeHit("mirror", url)));
+      for (const hit of hits) out.push(hitJson(hit));
+    }
+    return out;
   },
-  "line_auto": (_a, c) => ({
-    cancelled: true, previous: c.base, base: c.base, switched: false,
-    pick: { base: c.base, tier: "none", ms: 0, reason: "h5-fixed-line", candidates: [] },
-  }),
-  "line_try_main": (_a, c) => ({
-    cancelled: true, previous: c.base, base: c.base, switched: false,
-    probe: { ok: false, base: c.base, tier: "main", ms: 0, status: null },
-  }),
+  "line_auto": async (_a, c) => {
+    const previous = c.base;
+    const hits: Hit[] = [await probeHit("main", FIXED_LINES[0].url)];
+    let mirrorError: string | undefined;
+    if (!hits[0].ok) {
+      try {
+        const listing = await loadMirrors(c.base);
+        const candidates = autoCandidates(listing.items as MirrorItem[], c.base);
+        const more = await Promise.all(candidates.map((url) => probeHit("mirror", url)));
+        hits.push(...more);
+      } catch (error) {
+        mirrorError = error instanceof Error ? error.message : String(error);
+      }
+    }
+    const pick = pickFromHits(hits);
+    if (mirrorError) pick.mirror_error = mirrorError;
+    let switched = false;
+    if (pick.reason !== "all-down" && typeof pick.base === "string" && pick.base && pick.base !== c.base) {
+      await c.setLine(pick.base, false);
+      switched = true;
+    }
+    return { cancelled: false, previous, base: c.base, switched, pick };
+  },
+  "line_try_main": async (_a, c) => {
+    const previous = c.base;
+    const hit = await probeHit("main", FIXED_LINES[0].url);
+    let switched = false;
+    if (hit.ok && hit.url !== c.base) {
+      await c.setLine(hit.url, false);
+      switched = true;
+    }
+    return {
+      cancelled: false, previous, base: c.base, switched,
+      probe: { ok: hit.ok, base: hit.url, tier: "main", ms: hit.ms, status: hit.status },
+    };
+  },
   "line_health": async (_a, c) => {
-    const started = Date.now();
-    try { await c.get("/api/videos?page=1&size=1"); return { base: c.base, ok: true, ms: Date.now() - started, status: 200 }; }
-    catch { return { base: c.base, ok: false, ms: Date.now() - started, status: null }; }
+    const hit = await probeHit("current", c.base);
+    return { base: c.base, ok: hit.ok, ms: hit.ms, status: hit.status };
   },
 
   /* 应用内代理 / 更新检查：由 Cloudflare 出口与发版流程接管 */

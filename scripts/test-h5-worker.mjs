@@ -138,10 +138,10 @@ let cookie = "";
   check("跨站 Origin RPC → 403", r.status === 403);
 }
 {
-  // line_mirrors 是纯本地命令，不会触发上游 fetch
-  const r = await worker.fetch(post("/hg/rpc", { cmd: "line_mirrors" }, { cookie }), env);
+  // line_state 是纯本地命令，不会触发上游 fetch
+  const r = await worker.fetch(post("/hg/rpc", { cmd: "line_state" }, { cookie }), env);
   const j = await r.json();
-  check("同源 RPC 返回 channel/api/data", r.status === 200 && j.channel === "h5" && j.api === 1 && j.data?.source === "h5");
+  check("同源 RPC 返回 channel/api/data", r.status === 200 && j.channel === "h5" && j.api === 1 && j.data?.fixed?.length === 2);
 }
 {
   const r = await worker.fetch(post("/hg/rpc", { cmd: "no_such_cmd" }, { cookie }), env);
@@ -211,8 +211,156 @@ let cookie = "";
   }
 }
 
+/* ── 线路：自定义 / 发布页镜像 / 自动选线全链路（全部 mock fetch） ── */
+const call = (cmd, args = {}, lineCookie = "") => worker.fetch(
+  post("/hg/rpc", { cmd, args }, { cookie: lineCookie ? `${cookie}; ${lineCookie}` : cookie }),
+  env,
+);
+const readCookies = (r) => {
+  if (typeof r.headers.getSetCookie === "function") return r.headers.getSetCookie();
+  const raw = r.headers.get("set-cookie");
+  return raw ? [raw] : [];
+};
+const pickCookie = (r, name) => readCookies(r)
+  .map((raw) => raw.split(";")[0])
+  .find((part) => part.startsWith(`${name}=`)) ?? "";
+const withFetch = async (handler, fn) => {
+  const saved = globalThis.fetch;
+  globalThis.fetch = handler;
+  try { return await fn(); } finally { globalThis.fetch = saved; }
+};
+const FEED = JSON.stringify({
+  status: 1,
+  data: { items: [{ id: 1, title: "video" }], pagination: { page: 1, pages: 1, size: 1, total: 1 } },
+});
+const publishHtml = (src) => new Response(`<html><script src="${src}"></script></html>`, {
+  status: 200, headers: { "content-type": "text/html; charset=utf-8" },
+});
+const publishFetch = async (input) => {
+  const url = new URL(typeof input === "string" ? input : input.url);
+  if (url.pathname === "/" && url.hostname.endsWith(".pages.dev")) return publishHtml("/publish.js?v=2");
+  if (url.pathname === "/publish.js") {
+    return new Response(
+      "/* before */ var urls = ['a.example','b.example',]; const subdomains = ['one', 'two'];",
+      { status: 200, headers: { "content-type": "application/javascript" } },
+    );
+  }
+  return new Response(FEED, { status: 200, headers: { "content-type": "application/json" } });
+};
+const offlineFetch = async () => { throw new Error("offline"); };
+
+{
+  const r = await call("line_state");
+  const j = await r.json();
+  check("线路状态含两条固定线路且默认非自定义",
+    r.status === 200 && j.data.base === "https://huangguoai.com"
+    && j.data.custom === false && j.data.fixed.length === 2);
+}
+
+let customLineCookie = "";
+{
+  const r = await call("line_custom_set", { url: "https://Mirror.Example.com/" });
+  const j = await r.json();
+  customLineCookie = pickCookie(r, "hg_line");
+  check("自定义线路保存并规整为 HTTPS origin",
+    r.status === 200 && j.data.base === "https://mirror.example.com" && j.data.custom === true);
+  check("切换线路下发加密线路 Cookie 并清空会话凭据",
+    customLineCookie.length > 20 && readCookies(r).some((raw) => raw.startsWith("hg_session=;")));
+}
+{
+  const r = await call("line_state", {}, customLineCookie);
+  const j = await r.json();
+  check("加密线路 Cookie 在后续请求恢复",
+    r.status === 200 && j.data.base === "https://mirror.example.com" && j.data.custom === true);
+}
+{
+  const r = await call("line_reset", {}, customLineCookie);
+  const j = await r.json();
+  check("恢复主站清除自定义标记", r.status === 200 && j.data.base === "https://huangguoai.com" && j.data.custom === false);
+}
+for (const [name, url] of [
+  ["私网 IP 自定义线路被拒绝", "https://127.0.0.1/"],
+  ["内网主机名自定义线路被拒绝", "https://x.local/"],
+  ["HTTP 自定义线路被拒绝", "http://mirror.example.com/"],
+  ["带路径的自定义线路被拒绝", "https://mirror.example.com/api"],
+  ["带认证信息的自定义线路被拒绝", "https://u:p@mirror.example.com/"],
+]) {
+  const r = await call("line_custom_set", { url });
+  check(name, r.status === 400);
+}
+await withFetch(offlineFetch, async () => {
+  const r = await call("line_set", { url: "https://not-published.example" });
+  check("未发布的线路不能隐式切换", r.status === 400);
+});
+await withFetch(publishFetch, async () => {
+  const r = await call("line_mirrors");
+  const j = await r.json();
+  check("镜像列表来自两个发布页且去重交错",
+    r.status === 200 && j.data.items.length === 4 && j.data.items[0].url === "https://one.a.example");
+  check("推荐镜像把当前线路置于首位",
+    j.data.recommended[0].url === "https://huangguoai.com" && j.data.recommended.length > 1);
+  check("发布源信息回传", j.data.source.includes("huangguoai.pages.dev")
+    && j.data.source.includes("huang-guo.pages.dev"));
+  const s = await call("line_set", { url: "https://one.a.example" });
+  check("已发布镜像可直接切换", s.status === 200 && (await s.json()).data === "https://one.a.example");
+});
+{
+  const evilFetch = async (input) => {
+    const url = new URL(typeof input === "string" ? input : input.url);
+    if (url.pathname === "/" && url.hostname.endsWith(".pages.dev")) return publishHtml("/publish.js");
+    if (url.pathname === "/publish.js") {
+      return new Response(
+        "var urls=['good.example']; var urls=['evil.example'];",
+        { status: 200, headers: { "content-type": "application/javascript" } },
+      );
+    }
+    return new Response(FEED, { status: 200, headers: { "content-type": "application/json" } });
+  };
+  await withFetch(evilFetch, async () => {
+    const r = await call("line_mirrors");
+    check("重复声明的发布脚本失败关闭", r.status === 400);
+  });
+  await withFetch(async (input) => {
+    const url = new URL(typeof input === "string" ? input : input.url);
+    if (url.pathname === "/" && url.hostname.endsWith(".pages.dev")) {
+      return publishHtml("https://evil.example/publish.js");
+    }
+    return new Response(FEED, { status: 200, headers: { "content-type": "application/json" } });
+  }, async () => {
+    const r = await call("line_mirrors");
+    check("跨 origin 发布脚本被拒绝", r.status === 400);
+  });
+}
+await withFetch(publishFetch, async () => {
+  const p = await call("line_probe", { urls: ["https://a.example", "https://b.example"] });
+  const pj = await p.json();
+  check("线路探测走真实内容接口判据",
+    p.status === 200 && pj.data.length === 2 && pj.data[0].ok === true && pj.data[0].reachable === true);
+
+  const a = await call("line_auto");
+  const aj = await a.json();
+  check("自动选线主站可用时优先主站",
+    a.status === 200 && aj.data.cancelled === false && aj.data.pick.reason === "main-ok"
+    && aj.data.pick.base === "https://huangguoai.com");
+
+  const t = await call("line_try_main");
+  const tj = await t.json();
+  check("回切主站探测可用", t.status === 200 && tj.data.probe.ok === true && tj.data.probe.tier === "main");
+
+  const h = await call("line_health");
+  const hj = await h.json();
+  check("线路体检返回当前线路", h.status === 200 && hj.data.ok === true && hj.data.base === "https://huangguoai.com");
+});
+await withFetch(offlineFetch, async () => {
+  const r = await call("line_auto");
+  const j = await r.json();
+  check("全部探测失败时保持当前线路",
+    r.status === 200 && j.data.pick.reason === "all-down" && j.data.switched === false
+    && j.data.base === "https://huangguoai.com");
+});
+
 if (failed) {
   console.error(`H5 Worker 冒烟测试失败（${failed} 项）`);
   process.exit(1);
 }
-console.log(`H5 Worker 冒烟测试通过：探针 / 解锁 / 同源 / CSP / SSRF 共 ${total} 项断言`);
+console.log(`H5 Worker 冒烟测试通过：探针 / 解锁 / 同源 / CSP / SSRF / 媒体缓存 / 线路 共 ${total} 项断言`);

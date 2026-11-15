@@ -102,7 +102,7 @@ export default function LinePicker({ open, onClose }: { open: boolean; onClose: 
     if (!open) return;
     readState(true);
     setCustomError("");
-    if (mirrors === null && !isH5) void readMirrors();
+    if (mirrors === null) void readMirrors();
     return () => { stateRequest.current++; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
@@ -196,7 +196,6 @@ export default function LinePicker({ open, onClose }: { open: boolean; onClose: 
         {stateError && <div role="alert" className="text-[13px] text-danger px-1">
           {stateError}<Button className="min-h-12 px-3 text-primary" onClick={() => readState(true)}>重新读取</Button>
         </div>}
-        {!isH5 && <>
         <GroupHead title="自定义镜像" hint="保存后使用手动选线" />
         <Surface className="rounded-(--r-md) bg-s2 px-3.5 py-3">
           <form onSubmit={event => { event.preventDefault(); saveCustom(); }}>
@@ -214,7 +213,7 @@ export default function LinePicker({ open, onClose }: { open: boolean; onClose: 
             </div>
           </form>
         </Surface>
-        </>}
+
         <GroupHead
           title="固定线路"
           hint="需代理 / 非大陆网络"
@@ -233,7 +232,6 @@ export default function LinePicker({ open, onClose }: { open: boolean; onClose: 
           {!fixed.length && <div className="px-3.5 py-3 text-[12px] text-mut">读取中…</div>}
         </Surface>
 
-        {!isH5 && <>
         <GroupHead
           title="推荐镜像"
           hint="来自发布页 · 当前线路置顶"
@@ -291,11 +289,10 @@ export default function LinePicker({ open, onClose }: { open: boolean; onClose: 
               busy={probing === it.url} disabled={busyAll} onPick={pick} onProbe={(u) => probe([{ url: u }], u)} />
           ))}
         </Surface>
-        </>}
 
         <div className="text-[12px] text-dim leading-relaxed px-1 mt-4">
           {isH5
-            ? "H5 渠道只提供固定线路，切换后立即生效；可用线路由服务端白名单决定。"
+            ? "切换后立即生效。自定义线路需是 HTTPS 站点根地址，凭据只发给你显式选择的站点；这里的「检测」只探这一次，日常的自动选线在 设置 → 网络 → 自动选择线路。"
             : "切换后立即生效，请求链路与数据模型不变。这里的「检测」只探这一次；日常的自动选线在 设置 → 网络 → 自动选择线路。"}
         </div>
       </div>

@@ -196,7 +196,7 @@ export default function Settings({ onBack, initialSection }: { onBack: () => voi
               </div>
               <IChevR size={15} className="text-mut" />
             </Button>
-            {!isH5 && <div className="flex items-center gap-3 px-3.5 py-3">
+            <div className="flex items-center gap-3 px-3.5 py-3">
               <span className="ios-setting-icon"><IRefresh size={15} /></span>
               <div className="flex-1 min-w-0">
                 <div className="text-[14px] text-on">自动选择线路</div>
@@ -207,7 +207,7 @@ export default function Settings({ onBack, initialSection }: { onBack: () => voi
                 setAutoLineOn(on);
                 toast(on ? "已开启自动选择线路" : "已关闭自动选线，可手动选择播放源", "info");
               }} />
-            </div>}
+            </div>
             {!isH5 && <div className="flex items-center gap-3 px-3.5 py-3">
               <span className="ios-setting-icon"><ILockF size={15} /></span>
               <div className="flex-1 min-w-0">
@@ -323,7 +323,7 @@ export default function Settings({ onBack, initialSection }: { onBack: () => voi
           </>)}
 
           <div className="text-center text-[12px] text-dim mt-5">HGhubX {APP_VERSION} · {isH5 ? "H5 网页版" : `${platform === "android" ? "Android" : platform === "ios" ? "iOS" : platform === "macos" ? "macOS" : platform === "linux" ? "Linux" : "Windows"} 客户端`}</div>
-          {isH5 && <div className="text-center text-[12px] text-dim mt-1">线路、代理与安全策略由同源网关固定，客户端不提供原生设置</div>}
+          {isH5 && <div className="text-center text-[12px] text-dim mt-1">应用内代理、严格安全模式与本机诊断由浏览器环境接管，客户端不提供原生设置</div>}
         </div>
       </div>
 

@@ -12,7 +12,7 @@ export const UA =
 
 /** 与 src-tauri/src/net.rs 的 DEFAULT_BASE 一致 */
 export const DEFAULT_BASE = "https://huangguoai.com";
-/** 与 src-tauri/src/lines.rs 的 fixed() 一致；H5 侧只允许这两条固定线路 */
+/** 与 src-tauri/src/lines.rs 的 fixed() 一致；自定义与镜像线路另见 lines.ts */
 export const FIXED_LINES = [
   { name: "固定线路 1", url: "https://huangguoai.com" },
   { name: "固定线路 2", url: "https://huangguoai.ai" },

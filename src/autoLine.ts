@@ -1,7 +1,6 @@
 /* Automatic line selection uses the real content API and keeps the current line
  * when every candidate is unavailable. */
 import { api, hostOf, logLine, setNetObserver } from "./api";
-import { isH5 } from "./transport";
 import { tracePlayback } from "./playbackDiagnostics";
 import { readStorage, STORAGE_KEYS } from "./storage";
 
@@ -193,8 +192,8 @@ function attach() {
 }
 
 export function initAutoLine(): void {
-  // H5 的上游线路固定由 Worker 白名单决定，不做客户端自动选线与轮询探测
-  if (started || isH5) return;
+  // H5 与桌面端共用同一套自动选线：Worker 负责探测与切换，前端负责调度
+  if (started) return;
   started = true;
   if (!autoLineEnabled()) return;
   attach();

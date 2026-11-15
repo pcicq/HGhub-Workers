@@ -30,7 +30,7 @@ React + Vite 前端 + WinterTC 形态的边缘 Worker，同源代理 RPC 与媒�
 | 传输 | 浏览器 `POST /hg/rpc` → Worker 命令表 → 上游边缘信封；媒体走 `/hg/img`、`/hg/hls`、`/hg/seg` |
 | 访问控制 | 访问口令（`H5_ACCESS_KEY`，用 `wrangler secret` 写入）+ 同源校验 + HttpOnly 加密 Cookie |
 | 标准化 | 平台差异收敛到 `workers/src/platform.ts` 的 `PlatformAdapter` / `createEnv()` |
-| 门禁 | `h5:ci` = Worker tsc + 契约校验 + 23 项冒烟 + 前端构建；CI 不含任何部署动作 |
+| 门禁 | `h5:ci` = Worker tsc + 契约校验 + 45 项冒烟 + 前端构建；CI 不含任何部署动作 |
 
 核心 handler 不依赖 Cloudflare 专有 API。接其它 WinterTC 运行时只需实现 `get()` 与 `fetchAsset()`、写一个薄入口、把全部路径路由到函数，详见 [docs/h5-platforms.md](docs/h5-platforms.md)。
 
@@ -61,7 +61,7 @@ corepack pnpm h5:dev           # http://localhost:8787
 
 ## H5 渠道（实验性）
 
-单个 Worker 同时托管同一份前端产物与同源代理，上游地址、接口与登录凭据只留在服务端，不对公开访客开放。默认强制**访问口令 + 同源校验**。
+单个 Worker 同时托管同一份前端产物与同源代理，接口与登录凭据只留在服务端，不对公开访客开放。默认强制**访问口令 + 同源校验**。线路能力与桌面端对齐：固定线路、自定义线路、地址发布页镜像、手动探测、自动选线与回切主站都可用，当前线路存在加密 Cookie 中。
 
 > H5 渠道同样受本文顶部「中国大陆下载与传播限制」与使用须知的约束：**不要公开部署、不要传播接口或直链、不要商业化**。若不符合条款，请勿部署，仅在本地 `wrangler dev` 自用。
 
