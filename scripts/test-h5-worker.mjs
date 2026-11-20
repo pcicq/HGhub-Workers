@@ -141,7 +141,7 @@ let cookie = "";
   // line_state 是纯本地命令，不会触发上游 fetch
   const r = await worker.fetch(post("/hg/rpc", { cmd: "line_state" }, { cookie }), env);
   const j = await r.json();
-  check("同源 RPC 返回 channel/api/data", r.status === 200 && j.channel === "h5" && j.api === 1 && j.data?.fixed?.length === 2);
+  check("同源 RPC 返回 channel/api/data", r.status === 200 && j.channel === "h5" && j.api === 1 && j.data?.fixed?.length === 1);
 }
 {
   const r = await worker.fetch(post("/hg/rpc", { cmd: "no_such_cmd" }, { cookie }), env);
@@ -291,9 +291,9 @@ const offlineFetch = async () => { throw new Error("offline"); };
 {
   const r = await call("line_state");
   const j = await r.json();
-  check("线路状态含两条固定线路且默认非自定义",
+  check("线路状态含一条固定线路且默认非自定义",
     r.status === 200 && j.data.base === "https://huangguoai.com"
-    && j.data.custom === false && j.data.fixed.length === 2);
+    && j.data.custom === false && j.data.fixed.length === 1);
 }
 
 let customLineCookie = "";

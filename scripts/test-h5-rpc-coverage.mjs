@@ -73,7 +73,7 @@ check(!!frontContract && frontContract === serverContract,
 
 const prefix = /export const MEDIA_PREFIX = "([^"]+)";/.exec(workerConfig)?.[1];
 const frontPrefix = /export const H5_MEDIA = "([^"]+)";/.exec(transportSource)?.[1];
-const apiLocal = /export const LOCAL = isH5\s*\?\s*"([^"]+)"/.exec(read("src/api.ts"))?.[1];
+const apiLocal = /export const LOCAL = isH5\s*\?\s*"([^"]+)"/.exec(read("src/shared/api/api.ts"))?.[1];
 check(!!prefix && prefix === frontPrefix && prefix === apiLocal,
   `媒体前缀不一致：Worker ${prefix ?? "缺失"} / transport ${frontPrefix ?? "缺失"} / api.ts ${apiLocal ?? "缺失"}`);
 
@@ -81,7 +81,7 @@ check(!!prefix && prefix === frontPrefix && prefix === apiLocal,
 const lines = /export const FIXED_LINES = \[([\s\S]*?)\n\];/.exec(workerConfig)?.[1] ?? "";
 const bases = [...lines.matchAll(/url:\s*"([^"]+)"/g)].map((m) => m[1]);
 const rust = read("src-tauri/src/net.rs") + read("src-tauri/src/lines.rs");
-check(bases.length >= 2, "Worker 的固定线路表为空");
+check(bases.length >= 1, "Worker 的固定线路表为空");
 for (const base of bases) check(rust.includes(base), `固定线路 ${base} 在 Rust 侧不存在`);
 
 check(/import pkg from "\.\.\/\.\.\/package\.json"/.test(workerConfig)

@@ -144,6 +144,8 @@ npx --yes wrangler@4 secret put H5_ACCESS_KEY --config workers/wrangler.toml   #
 
 ## 上游兼容说明
 
+- 当前前端同步自上游 `zxsos/HGhubX` `main` 的 `13c3f9c`（v2.2.3 结构）；只取通用前端，排除 TV 版与 Tauri/Rust 工程，H5 适配集中在 `src/transport.ts` 与 `src/h5/`。
+- 上游源码保留的 `@tauri-apps/*` 调用由 `vite.config.ts` 的 alias 指向 `src/h5/` 浏览器实现；新增原生 API 时优先补 shim，避免改动上游源码。
 - 前端沿用上游 `hghubx_*` 本地存储键与界面文案，避免破坏上游的数据迁移逻辑；本仓库改名只作用于仓库与 Worker 层标识。
 - 新增 `invoke` 命令必须同步 `workers/src/rpc.ts` 的命令表或 `src/transport.ts` 的 `LOCAL_COMMANDS`；协议版本 `API_CONTRACT`、媒体前缀 `/hg`、固定线路在前端与 Worker 各有一份定义，由 `test-h5-rpc-coverage.mjs` 校验一致。
 - 契约脚本只校验命令名与常量，不校验参数形状。上游再改 `api.rs` 后需人工回归登录与互动流程。

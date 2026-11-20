@@ -12,13 +12,12 @@ export const UA =
 
 /** 与 src-tauri/src/net.rs 的 DEFAULT_BASE 一致 */
 export const DEFAULT_BASE = "https://huangguoai.com";
-/** 与 src-tauri/src/lines.rs 的 fixed() 一致；自定义与镜像线路另见 lines.ts */
+/** 与上游 src-tauri/src/lines/mirror.rs 的 fixed() 一致；huangguoai.ai 只是导航页，不再作为 API 线路 */
 export const FIXED_LINES = [
   { name: "固定线路 1", url: "https://huangguoai.com" },
-  { name: "固定线路 2", url: "https://huangguoai.ai" },
 ];
 
-/** 媒体代理前缀，必须与前端 src/api.ts 在 H5 下的 LOCAL 一致 */
+/** 媒体代理前缀，必须与前端 src/shared/api/api.ts 在 H5 下的 LOCAL 一致 */
 export const MEDIA_PREFIX = "/hg";
 export const COOKIE_ACCESS = "hg_access";
 export const COOKIE_SESSION = "hg_session";

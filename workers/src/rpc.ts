@@ -1,5 +1,5 @@
 // H5 渠道的 RPC 命令表：把前端原本发给 Tauri invoke 的命令翻译成上游「边缘信封」。
-// 契约对齐 src-tauri/src/api.rs（v2.1.0）：POST {base}/api/edge/request，
+// 契约对齐 src-tauri/src/api.rs（v2.2.3）：POST {base}/api/edge/request，
 // body = { method, path, body(base64 JSON), content_type }，响应取 { status:1, data }。
 import { APP_VERSION, DEFAULT_BASE, FIXED_LINES, SESSION_MAX_AGE, UA } from "./config";
 import {
@@ -456,6 +456,7 @@ const COMMANDS: Record<string, Handler> = {
   "api_post_comments": (a, c) => c.get(`/api/posts/${n(a, "id")}/comments?page=${n(a, "page", 1)}&size=${n(a, "size", 20)}`),
   "api_post_categories": (_a, c) => c.get("/api/site/categories/post"),
   "api_post_category": (a, c) => c.get(`/api/posts/category/${qs(s(a, "route"))}?page=${n(a, "page", 1)}&size=${n(a, "size", 20)}${sortPart(a)}`),
+  "api_post_tag": (a, c) => c.get(`/api/posts/tag/${qs(s(a, "tag"))}?page=${n(a, "page", 1)}&size=${n(a, "size", 20)}`),
 
   /* 线路：与桌面端同语义，区别只在「上游请求由 Worker 代发、线路存加密 Cookie」 */
   "line_state": (_a, c) => ({

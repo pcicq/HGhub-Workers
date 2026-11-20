@@ -1,5 +1,3 @@
-import { invoke } from "@tauri-apps/api/core";
-
 /**
  * 渠道判断走运行时：同一份 dist 既被 Tauri 打包（frontendDist），也被 Workers 托管（assets），
  * 不能用构建期常量区分。Tauri WebView 注入 __TAURI_INTERNALS__，浏览器没有。
@@ -29,6 +27,9 @@ export const LOCAL_COMMANDS: Record<string, (args: Record<string, unknown>) => u
     if (/^https?:\/\//i.test(url)) window.open(url, "_blank", "noopener,noreferrer");
     return null;
   },
+  // 上游新增的原生媒体/电视迁移命令，H5 不涉及本地文件与 TV 数据。
+  "media_http_origin": () => null,
+  "tv_migration_complete": () => null,
 };
 
 /* ── 能力探针 ─────────────────────────────────────────────
@@ -56,7 +57,7 @@ export const probeH5 = (): Promise<void> => (health ??= checkH5Health());
 
 /** invoke 的 H5 等价实现：命令名与参数形状保持与 Tauri 完全一致 */
 export async function invokeCompat<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
-  if (!isH5) return invoke<T>(cmd, args);
+  if (!isH5) throw new Error("当前构建仅支持 H5 渠道");
   const local = LOCAL_COMMANDS[cmd];
   if (local) return local(args ?? {}) as T;
 
